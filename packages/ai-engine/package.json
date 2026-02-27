@@ -1,0 +1,34 @@
+{
+  "name": "@caisogames/ai-engine",
+  "version": "0.1.0",
+  "description": "AI-optimized game engine with ECS architecture - Phase 1 Foundation",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts",
+    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "echo \"Tests coming in Phase 3\" && exit 0"
+  },
+  "keywords": [
+    "game-engine",
+    "ecs",
+    "entity-component-system",
+    "ai-generated-games",
+    "canvas-2d"
+  ],
+  "author": "CAISOGAMES V2 Team",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "tsup": "^8.0.1",
+    "typescript": "^5.3.3"
+  },
+  "peerDependencies": {},
+  "dependencies": {}
+}

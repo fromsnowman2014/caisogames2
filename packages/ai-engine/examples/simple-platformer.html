@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Simple Platformer - AI Engine Demo</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      background: #1a1a1a;
+      color: #fff;
+      font-family: 'Courier New', monospace;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    h1 {
+      margin: 0 0 10px 0;
+      font-size: 24px;
+    }
+    .info {
+      margin-bottom: 20px;
+      text-align: center;
+      font-size: 14px;
+      color: #888;
+    }
+    canvas {
+      border: 2px solid #00ff00;
+      box-shadow: 0 0 20px rgba(0, 255, 0, 0.3);
+    }
+  </style>
+</head>
+<body>
+  <h1>Simple Platformer Demo</h1>
+  <div class="info">
+    Controls: Arrow keys or WASD to move, Space to jump
+  </div>
+  <canvas id="gameCanvas"></canvas>
+
+  <script type="module">
+    // This would normally be: import { Engine, ... } from '@caisogames/ai-engine';
+    // For this demo, we'll inline a minimal version
+
+    // TEMPORARY: Minimal inline engine for demo
+    class Component {
+      constructor() {}
+    }
+
+    class Transform extends Component {
+      constructor() {
+        super();
+        this.x = 0;
+        this.y = 0;
+        this.scale = 1.0;
+        this.rotation = 0;
+        this.zIndex = 0;
+      }
+    }
+
+    class Sprite extends Component {
+      constructor() {
+        super();
+        this.texture = '#ffffff';
+        this.width = 32;
+        this.height = 32;
+        this.opacity = 1.0;
+        this.flipX = false;
+        this.flipY = false;
+      }
+    }
+
+    class Physics extends Component {
+      constructor() {
+        super();
+        this.velocityX = 0;
+        this.velocityY = 0;
+        this.useGravity = true;
+        this.friction = 0.8;
+        this.bounciness = 0.0;
+        this.mass = 1.0;
+        this.isStatic = false;
+        this.collider = {
+          shape: 'box',
+          width: 32,
+          height: 32,
+          offsetX: 0,
+          offsetY: 0,
+          isTrigger: false,
+        };
+        this.isGrounded = false;
+      }
+    }
+
+    class PlayerController extends Component {
+      constructor() {
+        super();
+        this.moveSpeed = 200;
+        this.jumpForce = 400;
+        this.canDoubleJump = false;
+      }
+    }
+
+    class Entity {
+      constructor(id) {
+        this.id = id;
+        this.components = new Map();
+        this.tags = new Set();
+      }
+
+      addComponent(componentType, config) {
+        const componentName = componentType.name;
+        const component = new componentType();
+        Object.assign(component, config);
+        this.components.set(componentName, component);
+      }
+
+      getComponent(componentType) {
+        return this.components.get(componentType.name) || null;
+      }
+
+      hasComponent(componentType) {
+        return this.components.has(componentType.name);
+      }
+
+      addTag(tag) {
+        this.tags.add(tag);
+      }
+
+      hasTag(tag) {
+        return this.tags.has(tag);
+      }
+    }
+
+    class System {
+      filterEntities(entities, ...componentTypes) {
+        return entities.filter(entity =>
+          componentTypes.every(type => entity.hasComponent(type))
+        );
+      }
+    }
+
+    class MovementSystem extends System {
+      constructor() {
+        super();
+        this.keys = new Set();
+        window.addEventListener('keydown', (e) => this.keys.add(e.key.toLowerCase()));
+        window.addEventListener('keyup', (e) => this.keys.delete(e.key.toLowerCase()));
+      }
+
+      update(deltaTime, entities) {
+        const dt = deltaTime / 1000;
+        const players = this.filterEntities(entities, Transform, Physics, PlayerController);
+
+        for (const player of players) {
+          const transform = player.getComponent(Transform);
+          const physics = player.getComponent(Physics);
+          const controller = player.getComponent(PlayerController);
+
+          let targetVelocityX = 0;
+          if (this.keys.has('a') || this.keys.has('arrowleft')) {
+            targetVelocityX = -controller.moveSpeed;
+          }
+          if (this.keys.has('d') || this.keys.has('arrowright')) {
+            targetVelocityX = controller.moveSpeed;
+          }
+
+          physics.velocityX = targetVelocityX;
+
+          if ((this.keys.has('w') || this.keys.has('arrowup') || this.keys.has(' ')) && physics.isGrounded) {
+            physics.velocityY = -controller.jumpForce;
+          }
+        }
+      }
+    }
+
+    class PhysicsSystem extends System {
+      constructor(gravity) {
+        super();
+        this.gravity = gravity;
+      }
+
+      update(deltaTime, entities) {
+        const dt = deltaTime / 1000;
+        const physicsEntities = this.filterEntities(entities, Transform, Physics);
+
+        for (const entity of physicsEntities) {
+          const transform = entity.getComponent(Transform);
+          const physics = entity.getComponent(Physics);
+
+          if (physics.isStatic) continue;
+
+          if (physics.useGravity) {
+            physics.velocityY += this.gravity * dt;
+          }
+
+          transform.x += physics.velocityX * dt;
+          transform.y += physics.velocityY * dt;
+
+          physics.isGrounded = false;
+        }
+      }
+    }
+
+    class CollisionSystem extends System {
+      update(deltaTime, entities) {
+        const physicsEntities = this.filterEntities(entities, Transform, Physics);
+
+        for (let i = 0; i < physicsEntities.length; i++) {
+          for (let j = i + 1; j < physicsEntities.length; j++) {
+            const entity1 = physicsEntities[i];
+            const entity2 = physicsEntities[j];
+
+            const collision = this.checkCollision(entity1, entity2);
+            if (collision) {
+              this.resolveCollision(collision);
+            }
+          }
+        }
+      }
+
+      checkCollision(entity1, entity2) {
+        const transform1 = entity1.getComponent(Transform);
+        const physics1 = entity1.getComponent(Physics);
+        const transform2 = entity2.getComponent(Transform);
+        const physics2 = entity2.getComponent(Physics);
+
+        const collider1 = physics1.collider;
+        const collider2 = physics2.collider;
+
+        const x1 = transform1.x + collider1.offsetX;
+        const y1 = transform1.y + collider1.offsetY;
+        const x2 = transform2.x + collider2.offsetX;
+        const y2 = transform2.y + collider2.offsetY;
+
+        const overlapX = Math.min(x1 + collider1.width, x2 + collider2.width) - Math.max(x1, x2);
+        const overlapY = Math.min(y1 + collider1.height, y2 + collider2.height) - Math.max(y1, y2);
+
+        if (overlapX > 0 && overlapY > 0) {
+          return { entity1, entity2, overlap: { x: overlapX, y: overlapY } };
+        }
+
+        return null;
+      }
+
+      resolveCollision(collision) {
+        const { entity1, entity2, overlap } = collision;
+        const physics1 = entity1.getComponent(Physics);
+        const physics2 = entity2.getComponent(Physics);
+        const transform1 = entity1.getComponent(Transform);
+        const transform2 = entity2.getComponent(Transform);
+
+        const separateOnX = overlap.x < overlap.y;
+
+        if (!separateOnX) {
+          const direction = transform1.y < transform2.y ? -1 : 1;
+
+          if (physics1.isStatic) {
+            transform2.y -= direction * overlap.y;
+            physics2.velocityY = 0;
+            if (direction > 0) physics2.isGrounded = true;
+          } else {
+            transform1.y += direction * overlap.y;
+            physics1.velocityY = 0;
+            if (direction < 0) physics1.isGrounded = true;
+          }
+        } else {
+          const direction = transform1.x < transform2.x ? -1 : 1;
+
+          if (physics1.isStatic) {
+            transform2.x -= direction * overlap.x;
+            physics2.velocityX = 0;
+          } else {
+            transform1.x += direction * overlap.x;
+            physics1.velocityX = 0;
+          }
+        }
+      }
+    }
+
+    class RenderSystem extends System {
+      constructor(ctx) {
+        super();
+        this.ctx = ctx;
+      }
+
+      update(deltaTime, entities) {
+        const renderableEntities = this.filterEntities(entities, Transform, Sprite);
+
+        renderableEntities.sort((a, b) => {
+          const transformA = a.getComponent(Transform);
+          const transformB = b.getComponent(Transform);
+          return transformA.zIndex - transformB.zIndex;
+        });
+
+        for (const entity of renderableEntities) {
+          const transform = entity.getComponent(Transform);
+          const sprite = entity.getComponent(Sprite);
+
+          this.ctx.save();
+          this.ctx.translate(transform.x, transform.y);
+          this.ctx.fillStyle = sprite.texture;
+          this.ctx.fillRect(-sprite.width / 2, -sprite.height / 2, sprite.width, sprite.height);
+          this.ctx.restore();
+        }
+      }
+    }
+
+    // Initialize game
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    canvas.width = 800;
+    canvas.height = 600;
+
+    const entities = [];
+    const systems = [];
+    const gravity = 980;
+
+    // Create player
+    const player = new Entity('player');
+    player.addComponent(Transform, { x: 100, y: 100 });
+    player.addComponent(Sprite, { texture: '#00ff00', width: 32, height: 32 });
+    player.addComponent(Physics, {
+      collider: { shape: 'box', width: 32, height: 32, offsetX: -16, offsetY: -16 }
+    });
+    player.addComponent(PlayerController, {});
+    player.addTag('player');
+    entities.push(player);
+
+    // Create platforms
+    const platform1 = new Entity('platform1');
+    platform1.addComponent(Transform, { x: 400, y: 500 });
+    platform1.addComponent(Sprite, { texture: '#ffffff', width: 600, height: 40 });
+    platform1.addComponent(Physics, {
+      isStatic: true,
+      collider: { shape: 'box', width: 600, height: 40, offsetX: -300, offsetY: -20 }
+    });
+    entities.push(platform1);
+
+    const platform2 = new Entity('platform2');
+    platform2.addComponent(Transform, { x: 200, y: 350 });
+    platform2.addComponent(Sprite, { texture: '#ffffff', width: 200, height: 30 });
+    platform2.addComponent(Physics, {
+      isStatic: true,
+      collider: { shape: 'box', width: 200, height: 30, offsetX: -100, offsetY: -15 }
+    });
+    entities.push(platform2);
+
+    const platform3 = new Entity('platform3');
+    platform3.addComponent(Transform, { x: 600, y: 300 });
+    platform3.addComponent(Sprite, { texture: '#ffffff', width: 200, height: 30 });
+    platform3.addComponent(Physics, {
+      isStatic: true,
+      collider: { shape: 'box', width: 200, height: 30, offsetX: -100, offsetY: -15 }
+    });
+    entities.push(platform3);
+
+    // Register systems
+    systems.push(new MovementSystem());
+    systems.push(new PhysicsSystem(gravity));
+    systems.push(new CollisionSystem());
+    systems.push(new RenderSystem(ctx));
+
+    // Game loop
+    let lastTime = performance.now();
+    let fps = 0;
+    let frameCount = 0;
+
+    function gameLoop() {
+      const currentTime = performance.now();
+      const deltaTime = currentTime - lastTime;
+      lastTime = currentTime;
+
+      frameCount++;
+      if (frameCount % 60 === 0) {
+        fps = Math.round(1000 / deltaTime);
+      }
+
+      // Clear canvas
+      ctx.fillStyle = '#1a1a1a';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Update systems
+      for (const system of systems) {
+        system.update(deltaTime, entities);
+      }
+
+      // Debug info
+      ctx.fillStyle = '#00ff00';
+      ctx.font = '14px monospace';
+      ctx.fillText(`FPS: ${fps}`, 10, 20);
+      ctx.fillText(`Entities: ${entities.length}`, 10, 40);
+
+      requestAnimationFrame(gameLoop);
+    }
+
+    gameLoop();
+  </script>
+</body>
+</html>
