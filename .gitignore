@@ -1,0 +1,55 @@
+# Dependencies
+node_modules/
+venv/
+__pycache__/
+*.pyc
+.Python
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Build outputs
+dist/
+build/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Cache
+.cache/
+*.cache
+
+# Generated assets (large files)
+generated-assets/sprites/*.png
+generated-assets/backgrounds/*.png
+generated-assets/ui/*.png
+generated-assets/audio/*.wav
+generated-assets/audio/*.mp3
+
+# Keep directory structure
+!generated-assets/sprites/.gitkeep
+!generated-assets/backgrounds/.gitkeep
+!generated-assets/ui/.gitkeep
+!generated-assets/audio/.gitkeep
+
+# Test outputs
+playwright-report/
+test-results/
+
+# Temporary files
+*.tmp
+.temp/

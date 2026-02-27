@@ -1,0 +1,17 @@
+# CAISOGAMES V2 - Python Dependencies (Phase 1)
+
+# No external dependencies for Phase 1 - using stdlib only
+# This follows V1's zero-dependency philosophy for core agents
+
+# Phase 2 dependencies (will be added later):
+# Pillow>=10.0.0  # Image processing
+# numpy>=1.24.0   # Array operations
+# rembg>=2.0.50   # AI background removal
+
+# Phase 3 dependencies:
+# playwright>=1.40.0  # E2E testing
+
+# Development dependencies:
+# pytest>=7.4.0
+# mypy>=1.7.0
+# black>=23.12.0
