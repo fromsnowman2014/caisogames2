@@ -1,0 +1,491 @@
+{
+  "project_id": "game-20260227-132956",
+  "version": "0.1.0",
+  "phase": "design",
+  "created_at": "2026-02-27T13:29:56.541933",
+  "user_request": "Create a pixel art platformer game where you play as a cute robot cat exploring a neon cyberpunk city. The cat can wall-jump and dash. Include collectible memory chips and avoid hostile drones.",
+  "target_platform": [
+    "web"
+  ],
+  "target_audience": "",
+  "design": {
+    "concept": {
+      "title": "Cyber Cat: Neon Memories",
+      "genre": "platformer",
+      "tagline": "A robot cat's quest through a neon cyberpunk city to recover lost memories",
+      "coreLoop": [
+        "Explore",
+        "Wall-Jump & Dash",
+        "Collect Memory Chips",
+        "Avoid Drones",
+        "Reach Checkpoint"
+      ],
+      "playerAbilities": [
+        {
+          "id": "jump",
+          "name": "Jump",
+          "description": "Basic jump ability",
+          "unlockCondition": null
+        },
+        {
+          "id": "wall_jump",
+          "name": "Wall Jump",
+          "description": "Jump off walls to reach higher platforms",
+          "unlockCondition": null
+        },
+        {
+          "id": "dash",
+          "name": "Dash",
+          "description": "Quick horizontal dash through obstacles",
+          "unlockCondition": "Collect 10 memory chips"
+        }
+      ],
+      "progressionSystem": {
+        "type": "linear",
+        "unlockMechanism": "level_completion"
+      },
+      "mechanics": {
+        "primary": [
+          "wall_jump",
+          "dash",
+          "platforming"
+        ],
+        "secondary": [
+          "collectibles",
+          "enemy_avoidance"
+        ],
+        "unique": [
+          "memory_chip_collection_unlocks_abilities",
+          "neon_visual_trails"
+        ]
+      },
+      "difficultyCurve": {
+        "type": "gradual",
+        "description": "Starts with basic platforming, introduces wall-jumping in level 1, dash in level 2"
+      },
+      "winCondition": "Collect all memory chips and reach the central server",
+      "loseCondition": "Hit by drones (respawn at checkpoint)",
+      "estimatedPlaytime": 25
+    },
+    "designRationale": "Combines classic platforming with cyberpunk aesthetics. Wall-jumping and dashing create skill-based gameplay. Memory chips as collectibles tie into narrative and progression.",
+    "referenceGames": [
+      "Celeste",
+      "Katana ZERO",
+      "Cyber Shadow"
+    ],
+    "levels": {
+      "levels": [
+        {
+          "id": "level_1",
+          "name": "Neon Alleys",
+          "difficulty": 2,
+          "theme": "cyberpunk_city",
+          "layout": {
+            "width": 3000,
+            "height": 800,
+            "platforms": [
+              {
+                "x": 0,
+                "y": 700,
+                "width": 300,
+                "height": 32,
+                "type": "ground"
+              },
+              {
+                "x": 400,
+                "y": 600,
+                "width": 200,
+                "height": 32,
+                "type": "floating"
+              },
+              {
+                "x": 700,
+                "y": 500,
+                "width": 150,
+                "height": 32,
+                "type": "floating"
+              }
+            ],
+            "enemies": [
+              {
+                "x": 500,
+                "y": 550,
+                "type": "drone",
+                "behavior": "patrol",
+                "patrolRange": 200
+              }
+            ],
+            "collectibles": [
+              {
+                "x": 450,
+                "y": 550,
+                "type": "memory_chip",
+                "value": 1,
+                "required": false
+              }
+            ],
+            "goal": {
+              "x": 2800,
+              "y": 700
+            }
+          },
+          "mechanics": {
+            "introduced": [
+              "wall_jump"
+            ],
+            "required": [
+              "basic_jump",
+              "wall_jump"
+            ]
+          },
+          "estimatedCompletionTime": "3-4 minutes",
+          "skillRequirements": [
+            "basic_jump",
+            "wall_jump",
+            "timing"
+          ]
+        },
+        {
+          "id": "level_2",
+          "name": "Rooftop Chase",
+          "difficulty": 4,
+          "theme": "rooftops",
+          "layout": {
+            "width": 3500,
+            "height": 900,
+            "platforms": [
+              {
+                "x": 0,
+                "y": 800,
+                "width": 250,
+                "height": 32,
+                "type": "ground"
+              },
+              {
+                "x": 350,
+                "y": 700,
+                "width": 180,
+                "height": 32,
+                "type": "floating"
+              }
+            ],
+            "enemies": [
+              {
+                "x": 600,
+                "y": 650,
+                "type": "drone",
+                "behavior": "chase",
+                "patrolRange": 300
+              }
+            ],
+            "collectibles": [
+              {
+                "x": 400,
+                "y": 650,
+                "type": "memory_chip",
+                "value": 1,
+                "required": false
+              }
+            ],
+            "goal": {
+              "x": 3300,
+              "y": 800
+            }
+          },
+          "mechanics": {
+            "introduced": [
+              "dash"
+            ],
+            "required": [
+              "wall_jump",
+              "dash",
+              "precision_timing"
+            ]
+          },
+          "estimatedCompletionTime": "4-5 minutes",
+          "skillRequirements": [
+            "wall_jump",
+            "dash",
+            "enemy_avoidance"
+          ]
+        },
+        {
+          "id": "level_3",
+          "name": "Central Server",
+          "difficulty": 7,
+          "theme": "tech_core",
+          "layout": {
+            "width": 4000,
+            "height": 1000,
+            "platforms": [
+              {
+                "x": 0,
+                "y": 900,
+                "width": 200,
+                "height": 32,
+                "type": "ground"
+              }
+            ],
+            "enemies": [
+              {
+                "x": 800,
+                "y": 700,
+                "type": "drone",
+                "behavior": "patrol",
+                "patrolRange": 150
+              },
+              {
+                "x": 1500,
+                "y": 600,
+                "type": "drone",
+                "behavior": "chase",
+                "patrolRange": 250
+              }
+            ],
+            "collectibles": [
+              {
+                "x": 900,
+                "y": 650,
+                "type": "memory_chip",
+                "value": 1,
+                "required": true
+              }
+            ],
+            "goal": {
+              "x": 3800,
+              "y": 900
+            }
+          },
+          "mechanics": {
+            "introduced": [],
+            "required": [
+              "wall_jump",
+              "dash",
+              "precise_platforming",
+              "enemy_timing"
+            ]
+          },
+          "estimatedCompletionTime": "6-8 minutes",
+          "skillRequirements": [
+            "mastery_of_all_mechanics"
+          ]
+        }
+      ],
+      "difficultyProgression": {
+        "curve": "gradual",
+        "description": "Level 1 introduces wall-jumping in safe environment. Level 2 adds dash and more enemies. Level 3 combines all mechanics with precise challenges."
+      },
+      "totalEstimatedPlaytime": 20
+    },
+    "narrative": {
+      "levels": [
+        {
+          "id": "level_1",
+          "name": "Neon Alleys",
+          "difficulty": 2,
+          "theme": "cyberpunk_city",
+          "layout": {
+            "width": 3000,
+            "height": 800,
+            "platforms": [
+              {
+                "x": 0,
+                "y": 700,
+                "width": 300,
+                "height": 32,
+                "type": "ground"
+              },
+              {
+                "x": 400,
+                "y": 600,
+                "width": 200,
+                "height": 32,
+                "type": "floating"
+              },
+              {
+                "x": 700,
+                "y": 500,
+                "width": 150,
+                "height": 32,
+                "type": "floating"
+              }
+            ],
+            "enemies": [
+              {
+                "x": 500,
+                "y": 550,
+                "type": "drone",
+                "behavior": "patrol",
+                "patrolRange": 200
+              }
+            ],
+            "collectibles": [
+              {
+                "x": 450,
+                "y": 550,
+                "type": "memory_chip",
+                "value": 1,
+                "required": false
+              }
+            ],
+            "goal": {
+              "x": 2800,
+              "y": 700
+            }
+          },
+          "mechanics": {
+            "introduced": [
+              "wall_jump"
+            ],
+            "required": [
+              "basic_jump",
+              "wall_jump"
+            ]
+          },
+          "estimatedCompletionTime": "3-4 minutes",
+          "skillRequirements": [
+            "basic_jump",
+            "wall_jump",
+            "timing"
+          ]
+        },
+        {
+          "id": "level_2",
+          "name": "Rooftop Chase",
+          "difficulty": 4,
+          "theme": "rooftops",
+          "layout": {
+            "width": 3500,
+            "height": 900,
+            "platforms": [
+              {
+                "x": 0,
+                "y": 800,
+                "width": 250,
+                "height": 32,
+                "type": "ground"
+              },
+              {
+                "x": 350,
+                "y": 700,
+                "width": 180,
+                "height": 32,
+                "type": "floating"
+              }
+            ],
+            "enemies": [
+              {
+                "x": 600,
+                "y": 650,
+                "type": "drone",
+                "behavior": "chase",
+                "patrolRange": 300
+              }
+            ],
+            "collectibles": [
+              {
+                "x": 400,
+                "y": 650,
+                "type": "memory_chip",
+                "value": 1,
+                "required": false
+              }
+            ],
+            "goal": {
+              "x": 3300,
+              "y": 800
+            }
+          },
+          "mechanics": {
+            "introduced": [
+              "dash"
+            ],
+            "required": [
+              "wall_jump",
+              "dash",
+              "precision_timing"
+            ]
+          },
+          "estimatedCompletionTime": "4-5 minutes",
+          "skillRequirements": [
+            "wall_jump",
+            "dash",
+            "enemy_avoidance"
+          ]
+        },
+        {
+          "id": "level_3",
+          "name": "Central Server",
+          "difficulty": 7,
+          "theme": "tech_core",
+          "layout": {
+            "width": 4000,
+            "height": 1000,
+            "platforms": [
+              {
+                "x": 0,
+                "y": 900,
+                "width": 200,
+                "height": 32,
+                "type": "ground"
+              }
+            ],
+            "enemies": [
+              {
+                "x": 800,
+                "y": 700,
+                "type": "drone",
+                "behavior": "patrol",
+                "patrolRange": 150
+              },
+              {
+                "x": 1500,
+                "y": 600,
+                "type": "drone",
+                "behavior": "chase",
+                "patrolRange": 250
+              }
+            ],
+            "collectibles": [
+              {
+                "x": 900,
+                "y": 650,
+                "type": "memory_chip",
+                "value": 1,
+                "required": true
+              }
+            ],
+            "goal": {
+              "x": 3800,
+              "y": 900
+            }
+          },
+          "mechanics": {
+            "introduced": [],
+            "required": [
+              "wall_jump",
+              "dash",
+              "precise_platforming",
+              "enemy_timing"
+            ]
+          },
+          "estimatedCompletionTime": "6-8 minutes",
+          "skillRequirements": [
+            "mastery_of_all_mechanics"
+          ]
+        }
+      ],
+      "difficultyProgression": {
+        "curve": "gradual",
+        "description": "Level 1 introduces wall-jumping in safe environment. Level 2 adds dash and more enemies. Level 3 combines all mechanics with precise challenges."
+      },
+      "totalEstimatedPlaytime": 20
+    }
+  },
+  "assets": {},
+  "style_guide": {},
+  "code": {},
+  "quality": {},
+  "build": {},
+  "metadata": {}
+}

@@ -1,0 +1,66 @@
+{
+  "concept": {
+    "title": "Cyber Cat: Neon Memories",
+    "genre": "platformer",
+    "tagline": "A robot cat's quest through a neon cyberpunk city to recover lost memories",
+    "coreLoop": [
+      "Explore",
+      "Wall-Jump & Dash",
+      "Collect Memory Chips",
+      "Avoid Drones",
+      "Reach Checkpoint"
+    ],
+    "playerAbilities": [
+      {
+        "id": "jump",
+        "name": "Jump",
+        "description": "Basic jump ability",
+        "unlockCondition": null
+      },
+      {
+        "id": "wall_jump",
+        "name": "Wall Jump",
+        "description": "Jump off walls to reach higher platforms",
+        "unlockCondition": null
+      },
+      {
+        "id": "dash",
+        "name": "Dash",
+        "description": "Quick horizontal dash through obstacles",
+        "unlockCondition": "Collect 10 memory chips"
+      }
+    ],
+    "progressionSystem": {
+      "type": "linear",
+      "unlockMechanism": "level_completion"
+    },
+    "mechanics": {
+      "primary": [
+        "wall_jump",
+        "dash",
+        "platforming"
+      ],
+      "secondary": [
+        "collectibles",
+        "enemy_avoidance"
+      ],
+      "unique": [
+        "memory_chip_collection_unlocks_abilities",
+        "neon_visual_trails"
+      ]
+    },
+    "difficultyCurve": {
+      "type": "gradual",
+      "description": "Starts with basic platforming, introduces wall-jumping in level 1, dash in level 2"
+    },
+    "winCondition": "Collect all memory chips and reach the central server",
+    "loseCondition": "Hit by drones (respawn at checkpoint)",
+    "estimatedPlaytime": 25
+  },
+  "designRationale": "Combines classic platforming with cyberpunk aesthetics. Wall-jumping and dashing create skill-based gameplay. Memory chips as collectibles tie into narrative and progression.",
+  "referenceGames": [
+    "Celeste",
+    "Katana ZERO",
+    "Cyber Shadow"
+  ]
+}

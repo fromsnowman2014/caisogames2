@@ -3,7 +3,7 @@ Event Bus for inter-agent communication.
 Enables agents to publish/subscribe to events asynchronously.
 """
 
-from typing import Dict, List, Callable, Any
+from typing import Dict, List, Callable, Any, Optional
 from enum import Enum
 from dataclasses import dataclass
 from datetime import datetime
