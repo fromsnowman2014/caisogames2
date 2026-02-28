@@ -148,7 +148,8 @@ Icon requirements:
         self,
         asset_requests: List[Dict[str, Any]],
         style_guide: Dict[str, Any],
-        max_iterations: int = 5
+        max_iterations: int = 5,
+        review_mode: str = "auto"  # "auto" or "manual"
     ) -> Dict[str, Any]:
         """
         Generate multiple assets with the given style guide.
@@ -157,6 +158,7 @@ Icon requirements:
             asset_requests: List of asset specifications
             style_guide: Art style and constraints
             max_iterations: Maximum refinement iterations per asset
+            review_mode: "auto" (AI validates) or "manual" (user decides)
 
         Returns:
             Dictionary with generated assets and metadata
@@ -175,12 +177,17 @@ Icon requirements:
         total_cost = 0.0
         total_iterations = 0
 
+        print(f"\n📋 Review Mode: {review_mode.upper()}")
+        if review_mode == "manual":
+            print("   User will review and approve each generated asset")
+
         for request in asset_requests:
             try:
                 asset = self._generate_single_asset(
                     request,
                     style_guide,
-                    max_iterations
+                    max_iterations,
+                    review_mode
                 )
                 generated_assets.append(asset)
                 total_cost += asset["metadata"].get("cost", 0.0)
@@ -225,7 +232,8 @@ Icon requirements:
         self,
         request: Dict[str, Any],
         style_guide: Dict[str, Any],
-        max_iterations: int
+        max_iterations: int,
+        review_mode: str = "auto"
     ) -> Dict[str, Any]:
         """
         Generate a single asset with iterative refinement.
@@ -251,6 +259,37 @@ Icon requirements:
         # Simulate asset generation (Mock mode)
         asset_path = self._create_mock_asset(request)
 
+        # Manual Review Mode
+        if review_mode == "manual":
+            approved = self._request_user_approval(request, asset_path, prompt)
+
+            if not approved:
+                print(f"   ❌ User rejected asset - regenerating...")
+                # In production, this would regenerate with user feedback
+                # For now, just mark as rejected
+                return {
+                    "requestId": request.get("id", request["name"]),
+                    "name": request["name"],
+                    "status": "rejected_by_user",
+                    "image": {
+                        "path": str(asset_path),
+                        "format": "png",
+                        "size": request["size"],
+                        "fileSize": 0
+                    },
+                    "metadata": {
+                        "prompt": prompt,
+                        "model": "imagen-4.0-generate-001",
+                        "iterations": 1,
+                        "bestIteration": 1,
+                        "qualityScore": 0,  # Rejected
+                        "generationTime": 0.5,
+                        "cost": 0.01,
+                        "review_mode": "manual",
+                        "user_approved": False
+                    }
+                }
+
         return {
             "requestId": request.get("id", request["name"]),
             "name": request["name"],
@@ -268,9 +307,66 @@ Icon requirements:
                 "bestIteration": 1,
                 "qualityScore": 95,  # Mock
                 "generationTime": 0.5,  # Mock
-                "cost": 0.01  # Mock
+                "cost": 0.01,  # Mock
+                "review_mode": review_mode,
+                "user_approved": True if review_mode == "manual" else None
             }
         }
+
+    def _request_user_approval(
+        self,
+        request: Dict[str, Any],
+        asset_path: Path,
+        prompt: str
+    ) -> bool:
+        """
+        Request user approval for generated asset (Manual Review Mode).
+
+        Args:
+            request: Asset request details
+            asset_path: Path to generated asset
+            prompt: Generation prompt used
+
+        Returns:
+            True if user approves, False if rejected
+        """
+        print("\n" + "=" * 80)
+        print("MANUAL REVIEW - USER APPROVAL REQUIRED")
+        print("=" * 80)
+        print(f"Asset: {request['name']}")
+        print(f"Category: {request['category']}")
+        print(f"Purpose: {request['purpose']}")
+        print(f"Size: {request['size']['width']}x{request['size']['height']}")
+        print(f"\nGenerated File: {asset_path}")
+        print(f"\nPrompt Used:")
+        print("-" * 80)
+        print(prompt[:500] + "..." if len(prompt) > 500 else prompt)
+        print("-" * 80)
+        print("\nIn production, you would:")
+        print("  1. View the generated image")
+        print("  2. Check if it matches requirements")
+        print("  3. Approve or request regeneration with feedback")
+        print("\n" + "=" * 80)
+
+        # In CLI mode, ask for user input
+        while True:
+            response = input("\nApprove this asset? (y/n/view): ").lower().strip()
+
+            if response == 'y' or response == 'yes':
+                print("   ✅ Asset APPROVED by user")
+                return True
+            elif response == 'n' or response == 'no':
+                print("   ❌ Asset REJECTED by user")
+                # In production, ask for feedback
+                feedback = input("   Feedback for regeneration (optional): ").strip()
+                if feedback:
+                    print(f"   📝 Feedback recorded: {feedback}")
+                return False
+            elif response == 'view' or response == 'v':
+                print(f"   📂 Asset location: {asset_path.absolute()}")
+                print("   (In production, this would display the image)")
+            else:
+                print("   Invalid input. Please enter 'y' (yes), 'n' (no), or 'view'")
 
     def _build_prompt(
         self,
