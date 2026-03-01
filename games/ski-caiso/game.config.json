@@ -1,0 +1,122 @@
+{
+  "id": "ski-caiso",
+  "name": "Ski Caiso",
+  "version": "0.1.0",
+  "description": "Carve an endless, hand-painted mountain with rhythmic flow and stylish tricks. Master the pump mechanic, nail perfect landings, and activate Flow State for massive speed boosts!",
+  "author": "CaisoGames AI Team",
+  "genre": "Endless Platformer",
+  "tags": ["skiing", "endless", "procedural", "rhythm", "2D"],
+
+  "thumbnail": "assets/ui/thumbnail.png",
+  "banner": "assets/ui/banner.png",
+  "icon": "assets/ui/icon.png",
+
+  "entryPoint": "src/index.html",
+  "buildCommand": "npm run build",
+
+  "controls": {
+    "keyboard": {
+      "down": "Pump for speed on downhills",
+      "up": "Jump boost at hill crests",
+      "left": "Backflip (in air)",
+      "right": "Frontflip (in air)"
+    },
+    "touch": {
+      "enabled": true,
+      "description": "Tap and hold to pump, swipe left/right for flips"
+    }
+  },
+
+  "screenshots": [
+    "assets/ui/screenshot1.png",
+    "assets/ui/screenshot2.png",
+    "assets/ui/screenshot3.png"
+  ],
+
+  "features": [
+    "Procedural terrain generation with sine wave synthesis",
+    "Perfect landing mechanic (match slope angle for speed boost)",
+    "Flow State combo system (consecutive perfects = invincibility + massive speed)",
+    "6 difficulty tiers with progressive obstacle introduction",
+    "Hand-drawn watercolor art style (Alto's Adventure inspired)",
+    "Unlockable abilities: Grind and Glide",
+    "Parallax background layers with peaceful winter atmosphere"
+  ],
+
+  "stats": {
+    "playtime": "2-5 minutes per run",
+    "difficulty": "Medium",
+    "replayability": "High"
+  },
+
+  "mechanics": {
+    "primary": [
+      "Rhythm-based Pumping (Tiny Wings style)",
+      "Slope-Matching Perfect Landings"
+    ],
+    "secondary": [
+      "Aerial Flip Tricks",
+      "Obstacle Avoidance (trees, rivers, cliffs)"
+    ],
+    "unique": [
+      "Flow State Meter: Fill with perfect landings and tricks, activate for speed boost + invincibility"
+    ]
+  },
+
+  "progression": {
+    "type": "milestone-based",
+    "unlockables": [
+      {
+        "name": "Grind",
+        "condition": "Reach 3000 meters in a single run",
+        "description": "Land on fallen logs or rails to maintain speed and earn bonus points"
+      },
+      {
+        "name": "Glide",
+        "condition": "Land 25 perfect landings in total",
+        "description": "Hold jump mid-air to deploy wingsuit and cross large chasms"
+      }
+    ]
+  },
+
+  "difficulty": {
+    "type": "gradual_distance_based",
+    "tiers": [
+      {
+        "name": "Pinecone Pass",
+        "distance": "0-1000m",
+        "description": "Gentle slopes, basic obstacles"
+      },
+      {
+        "name": "Logjam Ledge",
+        "distance": "1000-2500m",
+        "description": "Moderate difficulty, introduce grind rails"
+      },
+      {
+        "name": "Glacier Gap",
+        "distance": "2500m+",
+        "description": "High difficulty, large chasms requiring glide"
+      }
+    ]
+  },
+
+  "createdAt": "2026-03-01",
+  "updatedAt": "2026-03-01",
+  "status": "in-development",
+
+  "technicalDetails": {
+    "engine": "Custom HTML5 Canvas",
+    "physics": "Custom (no libraries)",
+    "renderer": "2D Canvas",
+    "audioSupport": true,
+    "mobileSupport": true,
+    "offlineSupport": false
+  },
+
+  "credits": {
+    "design": "Gemini 2.5 Pro (PM Agent, Design Team)",
+    "art": "Gemini Imagen 4 (Art Team)",
+    "code": "Claude Sonnet 4.5 (Code Team)",
+    "qa": "Multi-agent QA system"
+  }
+}

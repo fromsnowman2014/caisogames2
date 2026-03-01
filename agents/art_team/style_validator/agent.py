@@ -67,28 +67,10 @@ class StyleValidatorAgent:
         """
         print(f"\n🔍 Validating asset: {asset_path}")
 
-        # For Phase 2 with Mock mode, return simulated validation
-        # In production with Gemini Vision, this will analyze the actual image
-
-        validation_result = self._simulate_validation(
-            asset_path,
-            style_guide,
-            asset_metadata
+        raise NotImplementedError(
+            "Real Gemini Vision API integration required. "
+            "This agent needs to call the actual Gemini Vision API to validate generated images."
         )
-
-        # Emit event
-        self.event_bus.emit(Event(
-            type=EventType.ASSET_APPROVED if validation_result["passed"] else EventType.ASSET_REJECTED,
-            source_agent="StyleValidatorAgent",
-            payload={
-                "asset": asset_path,
-                "score": validation_result["overall_score"],
-                "passed": validation_result["passed"]
-            },
-            timestamp=None
-        ))
-
-        return validation_result
 
     def validate_batch(
         self,
@@ -143,84 +125,6 @@ class StyleValidatorAgent:
             "results": results
         }
 
-    def _simulate_validation(
-        self,
-        asset_path: str,
-        style_guide: Dict[str, Any],
-        asset_metadata: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """
-        Simulate validation (Mock mode for Phase 2).
-        In production, this will call Gemini Vision API.
-
-        Args:
-            asset_path: Path to asset
-            style_guide: Style guide
-            asset_metadata: Asset metadata
-
-        Returns:
-            Simulated validation result
-        """
-        # Simulate scores for each criterion
-        metrics = {
-            "style_consistency": {
-                "score": 92,
-                "feedback": "Asset matches the pixel art style well with sharp edges and limited palette.",
-                "suggestions": []
-            },
-            "technical_quality": {
-                "score": 95,
-                "feedback": "Clean edges, appropriate resolution, no artifacts detected.",
-                "suggestions": []
-            },
-            "transparency": {
-                "score": 88,
-                "feedback": "Background mostly removed, minor edge artifacts visible.",
-                "suggestions": ["Refine alpha channel around edges", "Check for white halo effect"]
-            },
-            "game_fit": {
-                "score": 94,
-                "feedback": "Appropriate size and detail level for game use.",
-                "suggestions": []
-            },
-            "composition": {
-                "score": 90,
-                "feedback": "Well-centered with good spacing, clear silhouette.",
-                "suggestions": ["Could benefit from slightly more bottom padding"]
-            }
-        }
-
-        # Calculate weighted overall score
-        overall_score = sum(
-            metrics[criterion]["score"] * self.CRITERIA_WEIGHTS[criterion]
-            for criterion in self.CRITERIA_WEIGHTS
-        )
-
-        # Collect all suggestions
-        all_suggestions = []
-        for metric in metrics.values():
-            all_suggestions.extend(metric.get("suggestions", []))
-
-        passed = overall_score >= self.quality_threshold
-
-        result = {
-            "overall_score": round(overall_score, 2),
-            "passed": passed,
-            "metrics": metrics,
-            "improvement_suggestions": all_suggestions,
-            "threshold": self.quality_threshold
-        }
-
-        # Print result
-        status_icon = "✅" if passed else "❌"
-        print(f"   {status_icon} Score: {result['overall_score']}/100 (threshold: {self.quality_threshold})")
-
-        if not passed:
-            print(f"   ⚠️  Below threshold - suggestions:")
-            for suggestion in all_suggestions:
-                print(f"      - {suggestion}")
-
-        return result
 
     def _build_validation_prompt(
         self,

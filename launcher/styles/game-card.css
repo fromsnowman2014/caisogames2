@@ -1,0 +1,324 @@
+/* ============================================
+   Game Card Styles
+   Xbox-inspired game cards with hover effects
+   ============================================ */
+
+.game-card {
+    background: var(--bg-card);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    cursor: pointer;
+    transition: all var(--transition-normal);
+    box-shadow: var(--shadow-sm);
+    border: 1px solid var(--border-color);
+    position: relative;
+}
+
+.game-card:hover {
+    transform: translateY(-8px);
+    box-shadow: var(--shadow-lg);
+    border-color: var(--accent-blue);
+}
+
+/* ============================================
+   Card Thumbnail
+   ============================================ */
+
+.card-thumbnail {
+    width: 100%;
+    height: 200px;
+    background: linear-gradient(135deg, var(--bg-tertiary), var(--bg-hover));
+    position: relative;
+    overflow: hidden;
+}
+
+.card-thumbnail img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: transform var(--transition-slow);
+}
+
+.game-card:hover .card-thumbnail img {
+    transform: scale(1.05);
+}
+
+.card-thumbnail-placeholder {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 4rem;
+    opacity: 0.3;
+}
+
+/* ============================================
+   Card Status Badge
+   ============================================ */
+
+.card-badge {
+    position: absolute;
+    top: var(--spacing-md);
+    right: var(--spacing-md);
+    padding: var(--spacing-xs) var(--spacing-md);
+    border-radius: var(--radius-sm);
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    backdrop-filter: blur(10px);
+}
+
+.badge-playable {
+    background: rgba(15, 175, 92, 0.9);
+    color: white;
+}
+
+.badge-in-development {
+    background: rgba(255, 108, 0, 0.9);
+    color: white;
+}
+
+.badge-coming-soon {
+    background: rgba(145, 71, 255, 0.9);
+    color: white;
+}
+
+/* ============================================
+   Card Content
+   ============================================ */
+
+.card-content {
+    padding: var(--spacing-lg);
+}
+
+.card-header {
+    margin-bottom: var(--spacing-md);
+}
+
+.card-title {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: var(--spacing-xs);
+}
+
+.card-genre {
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+.card-description {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    margin-bottom: var(--spacing-md);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* ============================================
+   Card Tags
+   ============================================ */
+
+.card-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-md);
+}
+
+.tag {
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    padding: var(--spacing-xs) var(--spacing-sm);
+    border-radius: var(--radius-sm);
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+/* ============================================
+   Card Stats
+   ============================================ */
+
+.card-stats {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-top: var(--spacing-md);
+    border-top: 1px solid var(--border-color);
+}
+
+.stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--spacing-xs);
+}
+
+.stat-icon {
+    font-size: 1.25rem;
+}
+
+.stat-label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.stat-value {
+    font-size: 0.875rem;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+/* ============================================
+   Card Actions
+   ============================================ */
+
+.card-actions {
+    display: flex;
+    gap: var(--spacing-sm);
+    margin-top: var(--spacing-md);
+}
+
+.card-btn {
+    flex: 1;
+    padding: var(--spacing-sm) var(--spacing-md);
+    border-radius: var(--radius-md);
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    transition: all var(--transition-fast);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-xs);
+}
+
+.btn-play {
+    background: var(--accent-green);
+    color: white;
+}
+
+.btn-play:hover {
+    background: #0c8a4a;
+    transform: translateY(-1px);
+}
+
+.btn-info {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+}
+
+.btn-info:hover {
+    background: var(--bg-hover);
+    border-color: var(--accent-blue);
+}
+
+.btn-disabled {
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+.btn-disabled:hover {
+    transform: none;
+}
+
+/* ============================================
+   Card Variants
+   ============================================ */
+
+.game-card.featured {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: 400px 1fr;
+    height: auto;
+}
+
+.game-card.featured .card-thumbnail {
+    height: 100%;
+}
+
+.game-card.featured .card-content {
+    padding: var(--spacing-2xl);
+}
+
+.game-card.featured .card-title {
+    font-size: 2rem;
+}
+
+.game-card.featured .card-description {
+    -webkit-line-clamp: 4;
+    font-size: 1rem;
+}
+
+/* ============================================
+   Empty State
+   ============================================ */
+
+.empty-state {
+    grid-column: 1 / -1;
+    text-align: center;
+    padding: var(--spacing-2xl);
+    background: var(--bg-secondary);
+    border-radius: var(--radius-lg);
+    border: 2px dashed var(--border-color);
+}
+
+.empty-state-icon {
+    font-size: 4rem;
+    margin-bottom: var(--spacing-md);
+    opacity: 0.3;
+}
+
+.empty-state h3 {
+    color: var(--text-primary);
+    font-size: 1.5rem;
+    margin-bottom: var(--spacing-sm);
+}
+
+.empty-state p {
+    color: var(--text-secondary);
+    margin-bottom: var(--spacing-lg);
+}
+
+/* ============================================
+   Responsive Design
+   ============================================ */
+
+@media (max-width: 768px) {
+    .game-card.featured {
+        grid-template-columns: 1fr;
+    }
+
+    .game-card.featured .card-thumbnail {
+        height: 200px;
+    }
+
+    .game-card.featured .card-content {
+        padding: var(--spacing-lg);
+    }
+
+    .game-card.featured .card-title {
+        font-size: 1.5rem;
+    }
+
+    .card-stats {
+        flex-direction: column;
+        gap: var(--spacing-sm);
+    }
+
+    .stat {
+        flex-direction: row;
+        width: 100%;
+        justify-content: space-between;
+    }
+}

@@ -142,22 +142,12 @@ class AnimationCreatorAgent:
         style_guide: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
-        Create a single animation.
-
-        In Phase 2 with Mock mode, this returns simulated data.
-        In production, this will generate actual frames using Imagen 4.
+        Create a single animation using Imagen 4.
         """
-        return {
-            "name": anim_name,
-            "frames": anim_def["frames"],
-            "fps": anim_def["fps"],
-            "loop": anim_def["loop"],
-            "description": anim_def["description"],
-            "frame_paths": [
-                f"generated-assets/animations/{base_sprite.get('name', 'character')}_{anim_name}_frame_{i}.mock.txt"
-                for i in range(anim_def["frames"])
-            ]
-        }
+        raise NotImplementedError(
+            "Real Imagen 4 API integration required. "
+            "This agent needs to call the actual Imagen 4 API to generate animation frames."
+        )
 
     def _create_sprite_sheet(
         self,
@@ -187,25 +177,10 @@ class AnimationCreatorAgent:
         sheet_width = frames_per_row * sprite_width
         sheet_height = rows * sprite_height
 
-        return {
-            "path": f"generated-assets/animations/{base_sprite.get('name', 'character')}_spritesheet.mock.txt",
-            "width": sheet_width,
-            "height": sheet_height,
-            "frame_width": sprite_width,
-            "frame_height": sprite_height,
-            "frames_per_row": frames_per_row,
-            "total_frames": total_frames,
-            "animations_metadata": [
-                {
-                    "name": anim["name"],
-                    "start_frame": sum(animations[j]["frames"] for j in range(i)),
-                    "frame_count": anim["frames"],
-                    "fps": anim["fps"],
-                    "loop": anim["loop"]
-                }
-                for i, anim in enumerate(animations)
-            ]
-        }
+        raise NotImplementedError(
+            "Sprite sheet assembly not implemented. "
+            "This requires actual animation frames to be generated first."
+        )
 
 
 def main():

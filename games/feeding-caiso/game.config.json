@@ -1,0 +1,73 @@
+{
+  "id": "feeding-caiso",
+  "name": "Feeding Caiso",
+  "version": "0.1.0",
+  "description": "Feed the adorable Caiso character by catching falling food items. Avoid the bad food and build up combos for high scores!",
+  "author": "CaisoGames AI Team",
+  "genre": "Arcade",
+  "tags": ["casual", "arcade", "catching", "family-friendly"],
+
+  "thumbnail": "assets/ui/thumbnail.png",
+  "banner": "assets/ui/banner.png",
+  "icon": "assets/ui/icon.png",
+
+  "entryPoint": "src/index.html",
+  "buildCommand": "npm run build",
+
+  "controls": {
+    "keyboard": {
+      "left": "Move left",
+      "right": "Move right",
+      "arrows": "Move Caiso"
+    },
+    "touch": {
+      "enabled": true,
+      "description": "Tap left or right side of screen to move"
+    }
+  },
+
+  "screenshots": [],
+
+  "features": [
+    "Simple one-button controls",
+    "Increasing difficulty as you progress",
+    "Combo system for bonus points",
+    "Colorful and charming art style",
+    "Family-friendly gameplay"
+  ],
+
+  "stats": {
+    "playtime": "3-5 minutes per round",
+    "difficulty": "Easy",
+    "replayability": "Medium"
+  },
+
+  "mechanics": {
+    "primary": [
+      "Catch falling food items",
+      "Avoid bad food"
+    ],
+    "secondary": [
+      "Build combos",
+      "Time-limited rounds"
+    ]
+  },
+
+  "createdAt": "2026-03-01",
+  "updatedAt": "2026-03-01",
+  "status": "coming-soon",
+
+  "technicalDetails": {
+    "engine": "Custom HTML5 Canvas",
+    "physics": "Simple gravity",
+    "renderer": "2D Canvas",
+    "audioSupport": true,
+    "mobileSupport": true,
+    "offlineSupport": false
+  },
+
+  "credits": {
+    "design": "Gemini 2.5 Pro",
+    "concept": "CaisoGames AI Team"
+  }
+}

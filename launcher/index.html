@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CaisoGames - AI-Powered Game Platform</title>
+    <link rel="stylesheet" href="styles/launcher.css">
+    <link rel="stylesheet" href="styles/game-card.css">
+</head>
+<body>
+    <!-- Navigation Bar -->
+    <nav class="navbar">
+        <div class="nav-left">
+            <h1 class="logo">
+                <span class="logo-icon">🎮</span>
+                CaisoGames
+            </h1>
+            <span class="tagline">AI-Powered Game Platform</span>
+        </div>
+        <div class="nav-right">
+            <button class="nav-btn" id="refreshBtn">
+                <span>🔄</span> Refresh
+            </button>
+            <button class="nav-btn" id="settingsBtn">
+                <span>⚙️</span> Settings
+            </button>
+        </div>
+    </nav>
+
+    <!-- Main Container -->
+    <main class="container">
+        <!-- Hero Section -->
+        <section class="hero">
+            <h2 class="hero-title">Welcome to CaisoGames</h2>
+            <p class="hero-subtitle">Discover AI-generated games built with Claude and Gemini</p>
+        </section>
+
+        <!-- Filter Bar -->
+        <section class="filter-bar">
+            <button class="filter-btn active" data-filter="all">
+                All Games
+            </button>
+            <button class="filter-btn" data-filter="playable">
+                Playable
+            </button>
+            <button class="filter-btn" data-filter="in-development">
+                In Development
+            </button>
+            <button class="filter-btn" data-filter="coming-soon">
+                Coming Soon
+            </button>
+        </section>
+
+        <!-- Games Grid -->
+        <section class="games-grid" id="gamesGrid">
+            <!-- Game cards will be dynamically loaded here -->
+            <div class="loading">
+                <div class="spinner"></div>
+                <p>Loading games...</p>
+            </div>
+        </section>
+
+        <!-- Add New Game Card (Always shown) -->
+        <section class="add-game-section">
+            <div class="game-card add-game-card" id="addGameCard">
+                <div class="add-game-content">
+                    <div class="add-game-icon">+</div>
+                    <h3>Create New Game</h3>
+                    <p>Use AI to generate a new game</p>
+                    <button class="btn-primary">Start Creating</button>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <p>&copy; 2026 CaisoGames V2 - Built with AI (Claude + Gemini)</p>
+        <div class="footer-links">
+            <a href="https://github.com/fromsnowman2014/CAISOGAMES" target="_blank">GitHub</a>
+            <a href="../docs/README.md">Documentation</a>
+            <a href="#about">About</a>
+        </div>
+    </footer>
+
+    <!-- Game Detail Modal -->
+    <div class="modal" id="gameModal">
+        <div class="modal-content">
+            <button class="modal-close" id="modalClose">&times;</button>
+            <div class="modal-body" id="modalBody">
+                <!-- Game details will be injected here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Create Game Modal -->
+    <div class="modal" id="createGameModal">
+        <div class="modal-content">
+            <button class="modal-close" id="createModalClose">&times;</button>
+            <div class="modal-body">
+                <h2>Create New Game with AI</h2>
+                <form id="createGameForm">
+                    <div class="form-group">
+                        <label for="gameIdea">Describe your game idea:</label>
+                        <textarea
+                            id="gameIdea"
+                            rows="6"
+                            placeholder="Example: Create a pixel art platformer where you play as a cute robot cat navigating through a neon cyberpunk city..."
+                            required
+                        ></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="gameGenre">Genre:</label>
+                        <select id="gameGenre">
+                            <option value="platformer">Platformer</option>
+                            <option value="endless">Endless Runner</option>
+                            <option value="puzzle">Puzzle</option>
+                            <option value="shooter">Shooter</option>
+                            <option value="racing">Racing</option>
+                            <option value="adventure">Adventure</option>
+                        </select>
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" class="btn-secondary" id="cancelCreate">Cancel</button>
+                        <button type="submit" class="btn-primary">Generate Game</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script type="module" src="js/launcher.js"></script>
+    <script type="module" src="js/game-loader.js"></script>
+</body>
+</html>
