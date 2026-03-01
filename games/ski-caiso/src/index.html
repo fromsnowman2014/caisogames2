@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ski Caiso - Endless Skiing Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: linear-gradient(to bottom, #4A90E2, #7FB3D5);
+            font-family: Arial, sans-serif;
+        }
+
+        #gameContainer {
+            text-align: center;
+        }
+
+        canvas {
+            border: 4px solid #2C3E50;
+            border-radius: 8px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            background: #87CEEB;
+        }
+
+        h1 {
+            color: white;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+            margin-bottom: 20px;
+        }
+
+        .controls {
+            margin-top: 20px;
+            color: white;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 15px;
+            border-radius: 8px;
+            max-width: 800px;
+        }
+
+        .controls h3 {
+            margin-top: 0;
+        }
+
+        .controls p {
+            margin: 5px 0;
+        }
+
+        .key {
+            display: inline-block;
+            background: #34495E;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-weight: bold;
+            margin: 0 5px;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <h1>🏂 Ski Caiso</h1>
+        <canvas id="gameCanvas"></canvas>
+        <div class="controls">
+            <h3>Controls</h3>
+            <p><span class="key">↓ Down</span> - Pump for speed on downhills</p>
+            <p><span class="key">↑ Up / Space</span> - Jump boost at hills</p>
+            <p><span class="key">← Left</span> - Backflip (in air)</p>
+            <p><span class="key">→ Right</span> - Frontflip (in air)</p>
+        </div>
+    </div>
+
+    <script type="module" src="main.js"></script>
+</body>
+</html>
