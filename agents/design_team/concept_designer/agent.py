@@ -170,6 +170,11 @@ class ConceptDesignerAgent:
 
         # Check playtime
         playtime = concept.get("estimatedPlaytime", 0)
+        try:
+            playtime = int(playtime) if playtime else 0
+        except (ValueError, TypeError):
+            playtime = 0
+
         if playtime < 5:
             issues.append("Playtime too short (< 5 min)")
             score -= 10

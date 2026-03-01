@@ -1,0 +1,465 @@
+{
+  "levels": [
+    {
+      "id": "level_1",
+      "name": "Pinecone Pass",
+      "difficulty": 1,
+      "theme": "snowy_forest",
+      "layout": {
+        "width": 3000,
+        "height": 600,
+        "platforms": [
+          {
+            "x": 0,
+            "y": 500,
+            "width": 300,
+            "height": 100,
+            "type": "ground"
+          },
+          {
+            "x": 300,
+            "y": 520,
+            "width": 400,
+            "height": 80,
+            "type": "ground"
+          },
+          {
+            "x": 700,
+            "y": 560,
+            "width": 300,
+            "height": 40,
+            "type": "ground"
+          },
+          {
+            "x": 1000,
+            "y": 520,
+            "width": 150,
+            "height": 80,
+            "type": "ground"
+          },
+          {
+            "x": 1150,
+            "y": 480,
+            "width": 100,
+            "height": 120,
+            "type": "ground"
+          },
+          {
+            "x": 1400,
+            "y": 550,
+            "width": 600,
+            "height": 50,
+            "type": "ground"
+          },
+          {
+            "x": 2000,
+            "y": 580,
+            "width": 300,
+            "height": 20,
+            "type": "ground"
+          },
+          {
+            "x": 2300,
+            "y": 540,
+            "width": 150,
+            "height": 60,
+            "type": "ground"
+          },
+          {
+            "x": 2450,
+            "y": 500,
+            "width": 100,
+            "height": 100,
+            "type": "ground"
+          },
+          {
+            "x": 2650,
+            "y": 550,
+            "width": 350,
+            "height": 50,
+            "type": "ground"
+          }
+        ],
+        "enemies": [],
+        "collectibles": [
+          {
+            "x": 1200,
+            "y": 380,
+            "type": "flow_crystal",
+            "value": 10,
+            "required": false
+          },
+          {
+            "x": 1275,
+            "y": 360,
+            "type": "flow_crystal",
+            "value": 10,
+            "required": false
+          },
+          {
+            "x": 1350,
+            "y": 380,
+            "type": "flow_crystal",
+            "value": 10,
+            "required": false
+          },
+          {
+            "x": 2500,
+            "y": 400,
+            "type": "flow_crystal",
+            "value": 10,
+            "required": false
+          }
+        ],
+        "goal": {
+          "x": 2950,
+          "y": 500
+        }
+      },
+      "mechanics": {
+        "introduced": [
+          "Pump",
+          "Jump Boost"
+        ],
+        "required": [
+          "Pump",
+          "Jump Boost"
+        ]
+      },
+      "estimatedCompletionTime": "1-2 minutes",
+      "skillRequirements": [
+        "Pump",
+        "Jump Boost"
+      ]
+    },
+    {
+      "id": "level_2",
+      "name": "Logjam Ledge",
+      "difficulty": 4,
+      "theme": "forest_ravine",
+      "layout": {
+        "width": 4000,
+        "height": 800,
+        "platforms": [
+          {
+            "x": 0,
+            "y": 600,
+            "width": 400,
+            "height": 200,
+            "type": "ground"
+          },
+          {
+            "x": 400,
+            "y": 650,
+            "width": 500,
+            "height": 150,
+            "type": "ground"
+          },
+          {
+            "x": 900,
+            "y": 600,
+            "width": 150,
+            "height": 200,
+            "type": "ground"
+          },
+          {
+            "x": 1300,
+            "y": 650,
+            "width": 200,
+            "height": 150,
+            "type": "ground"
+          },
+          {
+            "x": 1500,
+            "y": 620,
+            "width": 400,
+            "height": 20,
+            "type": "grind_rail"
+          },
+          {
+            "x": 1900,
+            "y": 650,
+            "width": 200,
+            "height": 150,
+            "type": "ground"
+          },
+          {
+            "x": 2200,
+            "y": 550,
+            "width": 150,
+            "height": 32,
+            "type": "floating"
+          },
+          {
+            "x": 2500,
+            "y": 500,
+            "width": 150,
+            "height": 32,
+            "type": "floating"
+          },
+          {
+            "x": 2800,
+            "y": 580,
+            "width": 500,
+            "height": 220,
+            "type": "ground"
+          },
+          {
+            "x": 3300,
+            "y": 620,
+            "width": 300,
+            "height": 180,
+            "type": "ground"
+          },
+          {
+            "x": 3600,
+            "y": 580,
+            "width": 100,
+            "height": 220,
+            "type": "ground"
+          },
+          {
+            "x": 3800,
+            "y": 600,
+            "width": 200,
+            "height": 200,
+            "type": "ground"
+          }
+        ],
+        "enemies": [
+          {
+            "x": 1350,
+            "y": 620,
+            "type": "porcupine",
+            "behavior": "patrol",
+            "patrolRange": 50
+          },
+          {
+            "x": 2900,
+            "y": 550,
+            "type": "porcupine",
+            "behavior": "patrol",
+            "patrolRange": 150
+          },
+          {
+            "x": 3400,
+            "y": 590,
+            "type": "porcupine",
+            "behavior": "patrol",
+            "patrolRange": 100
+          }
+        ],
+        "collectibles": [
+          {
+            "x": 1150,
+            "y": 450,
+            "type": "score_gem",
+            "value": 50,
+            "required": false
+          },
+          {
+            "x": 1650,
+            "y": 590,
+            "type": "flow_crystal",
+            "value": 10,
+            "required": false
+          },
+          {
+            "x": 2350,
+            "y": 400,
+            "type": "score_gem",
+            "value": 100,
+            "required": false
+          }
+        ],
+        "goal": {
+          "x": 3900,
+          "y": 550
+        }
+      },
+      "mechanics": {
+        "introduced": [
+          "Flip",
+          "Grind"
+        ],
+        "required": [
+          "Pump",
+          "Jump Boost",
+          "Flip",
+          "Grind"
+        ]
+      },
+      "estimatedCompletionTime": "2-4 minutes",
+      "skillRequirements": [
+        "Pump",
+        "Jump Boost",
+        "Flip",
+        "Grind",
+        "Obstacle Avoidance"
+      ]
+    },
+    {
+      "id": "level_3",
+      "name": "Glacier Gap",
+      "difficulty": 7,
+      "theme": "alpine_glacier",
+      "layout": {
+        "width": 5000,
+        "height": 1000,
+        "platforms": [
+          {
+            "x": 0,
+            "y": 700,
+            "width": 300,
+            "height": 300,
+            "type": "ground"
+          },
+          {
+            "x": 300,
+            "y": 750,
+            "width": 500,
+            "height": 250,
+            "type": "ground"
+          },
+          {
+            "x": 800,
+            "y": 700,
+            "width": 150,
+            "height": 300,
+            "type": "ground"
+          },
+          {
+            "x": 1600,
+            "y": 800,
+            "width": 200,
+            "height": 200,
+            "type": "floating"
+          },
+          {
+            "x": 2000,
+            "y": 750,
+            "width": 200,
+            "height": 250,
+            "type": "floating"
+          },
+          {
+            "x": 2400,
+            "y": 700,
+            "width": 200,
+            "height": 300,
+            "type": "floating"
+          },
+          {
+            "x": 2900,
+            "y": 650,
+            "width": 400,
+            "height": 20,
+            "type": "grind_rail"
+          },
+          {
+            "x": 3300,
+            "y": 680,
+            "width": 150,
+            "height": 320,
+            "type": "ground"
+          },
+          {
+            "x": 4400,
+            "y": 750,
+            "width": 600,
+            "height": 250,
+            "type": "ground"
+          }
+        ],
+        "enemies": [
+          {
+            "x": 1700,
+            "y": 300,
+            "type": "falling_icicle",
+            "behavior": "stationary",
+            "patrolRange": 0
+          },
+          {
+            "x": 2100,
+            "y": 300,
+            "type": "falling_icicle",
+            "behavior": "stationary",
+            "patrolRange": 0
+          },
+          {
+            "x": 2500,
+            "y": 300,
+            "type": "falling_icicle",
+            "behavior": "stationary",
+            "patrolRange": 0
+          },
+          {
+            "x": 4500,
+            "y": 720,
+            "type": "ice_spikes",
+            "behavior": "stationary",
+            "patrolRange": 0
+          }
+        ],
+        "collectibles": [
+          {
+            "x": 1200,
+            "y": 600,
+            "type": "flow_crystal",
+            "value": 10,
+            "required": false
+          },
+          {
+            "x": 1300,
+            "y": 580,
+            "type": "flow_crystal",
+            "value": 10,
+            "required": false
+          },
+          {
+            "x": 1400,
+            "y": 600,
+            "type": "flow_crystal",
+            "value": 10,
+            "required": false
+          },
+          {
+            "x": 3800,
+            "y": 500,
+            "type": "score_gem",
+            "value": 250,
+            "required": false
+          }
+        ],
+        "goal": {
+          "x": 4900,
+          "y": 700
+        }
+      },
+      "mechanics": {
+        "introduced": [
+          "Glide",
+          "Flow State"
+        ],
+        "required": [
+          "Pump",
+          "Jump Boost",
+          "Flip",
+          "Grind",
+          "Glide"
+        ]
+      },
+      "estimatedCompletionTime": "3-5 minutes",
+      "skillRequirements": [
+        "All Mechanics Mastery",
+        "Precision Air Control",
+        "Flow State Management"
+      ]
+    }
+  ],
+  "difficultyProgression": {
+    "curve": "gradual",
+    "description": "Difficulty increases by introducing one or two core mechanics per level in a safe environment, then combining them in subsequent levels. Level 1 focuses on the core momentum loop. Level 2 adds tricks and environmental interaction (grinding). Level 3 requires mastery of all mechanics, including advanced air control with the glider, to navigate significant hazards and large gaps."
+  },
+  "totalEstimatedPlaytime": 10
+}

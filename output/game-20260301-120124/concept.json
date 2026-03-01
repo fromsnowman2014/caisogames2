@@ -1,0 +1,75 @@
+{
+  "concept": {
+    "title": "Ski Caiso",
+    "genre": "Endless Platformer",
+    "tagline": "Carve an endless, hand-painted mountain with rhythmic flow and stylish tricks.",
+    "coreLoop": [
+      "BUILD MOMENTUM: Press and hold 'Down' on downhill slopes to gain speed.",
+      "LAUNCH & TRICK: Release 'Down' and press 'Up' at the crest of a hill to jump, then use 'Left'/'Right' for flips.",
+      "STICK THE LANDING: Align your skier with the upcoming slope for a 'Perfect Landing' speed boost.",
+      "SURVIVE & REPEAT: Avoid obstacles and use your momentum to travel as far as possible."
+    ],
+    "playerAbilities": [
+      {
+        "id": "pump",
+        "name": "Pump",
+        "description": "Press and hold on a downhill slope to gain speed by compressing into the terrain.",
+        "unlockCondition": null
+      },
+      {
+        "id": "jump",
+        "name": "Jump Boost",
+        "description": "Press at the crest of a hill to use its curvature for a significant air boost.",
+        "unlockCondition": null
+      },
+      {
+        "id": "flip",
+        "name": "Flip",
+        "description": "Perform a backflip or frontflip while airborne for score and to fill the Flow meter.",
+        "unlockCondition": null
+      },
+      {
+        "id": "grind",
+        "name": "Grind",
+        "description": "Land on fallen logs or special rails to maintain speed and earn a large bonus.",
+        "unlockCondition": "Reach 3000 meters in a single run."
+      },
+      {
+        "id": "glide",
+        "name": "Glide",
+        "description": "Hold the jump button mid-air to deploy a small wingsuit, extending airtime to cross large chasms.",
+        "unlockCondition": "Land 25 perfect landings in total."
+      }
+    ],
+    "progressionSystem": {
+      "type": "linear",
+      "unlockMechanism": "Players unlock new permanent abilities and cosmetic items by reaching distance milestones and completing in-run challenges (e.g., 'Perform 3 backflips in one jump')."
+    },
+    "mechanics": {
+      "primary": [
+        "Rhythm-based Pumping (Tiny Wings style)",
+        "Slope-Matching Perfect Landings"
+      ],
+      "secondary": [
+        "Aerial Flip Tricks",
+        "Obstacle Avoidance (trees, rivers, cliffs)"
+      ],
+      "unique": [
+        "'Flow State' Meter: Consecutive perfect landings and tricks fill a meter that, when activated, provides a temporary massive speed boost and invincibility to minor obstacles."
+      ]
+    },
+    "difficultyCurve": {
+      "type": "gradual",
+      "description": "Difficulty increases in six tiers based on distance. New obstacles and more complex terrain combinations are introduced every few thousand meters, creating a steady but noticeable challenge ramp that tests mastery of learned skills."
+    },
+    "winCondition": "As an endless game, the goal is to achieve the highest possible distance score. 'Winning' is defined by completing all challenges, unlocking all abilities, and setting a personal best on the leaderboard.",
+    "loseCondition": "The run ends when the player's forward momentum stops completely (crashing into a tree, falling in a river, failing to clear a steep uphill slope) or falling into a bottomless chasm.",
+    "estimatedPlaytime": "Average run: 2-5 minutes. Time to unlock all content: 5-8 hours."
+  },
+  "designRationale": "The design focuses on a highly satisfying 'flow' state, rewarding skillful play with speed and visual feedback. The core loop is simple enough for casual players (inspired by 'Tiny Wings' and 'Alto's Adventure') but the 'Perfect Landing' and 'Flow State' mechanics provide a high skill ceiling for long-term engagement. The procedural generation and reusable mechanics make it feasible for a small team or AI-assisted development within a 2-4 week timeframe. The watercolor art style is achievable and provides a premium, polished feel on a budget. Simple two-button controls (one for down, one for up/actions) are perfect for web and easily adaptable to mobile touch screens.",
+  "referenceGames": [
+    "Alto's Adventure",
+    "Tiny Wings",
+    "SSX (series)"
+  ]
+}

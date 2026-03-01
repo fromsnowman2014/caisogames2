@@ -1,0 +1,204 @@
+{
+  "levels": [
+    {
+      "id": "level_1",
+      "name": "Neon Alleys",
+      "difficulty": 2,
+      "theme": "cyberpunk_city",
+      "layout": {
+        "width": 3000,
+        "height": 800,
+        "platforms": [
+          {
+            "x": 0,
+            "y": 700,
+            "width": 300,
+            "height": 32,
+            "type": "ground"
+          },
+          {
+            "x": 400,
+            "y": 600,
+            "width": 200,
+            "height": 32,
+            "type": "floating"
+          },
+          {
+            "x": 700,
+            "y": 500,
+            "width": 150,
+            "height": 32,
+            "type": "floating"
+          }
+        ],
+        "enemies": [
+          {
+            "x": 500,
+            "y": 550,
+            "type": "drone",
+            "behavior": "patrol",
+            "patrolRange": 200
+          }
+        ],
+        "collectibles": [
+          {
+            "x": 450,
+            "y": 550,
+            "type": "memory_chip",
+            "value": 1,
+            "required": false
+          }
+        ],
+        "goal": {
+          "x": 2800,
+          "y": 700
+        }
+      },
+      "mechanics": {
+        "introduced": [
+          "wall_jump"
+        ],
+        "required": [
+          "basic_jump",
+          "wall_jump"
+        ]
+      },
+      "estimatedCompletionTime": "3-4 minutes",
+      "skillRequirements": [
+        "basic_jump",
+        "wall_jump",
+        "timing"
+      ]
+    },
+    {
+      "id": "level_2",
+      "name": "Rooftop Chase",
+      "difficulty": 4,
+      "theme": "rooftops",
+      "layout": {
+        "width": 3500,
+        "height": 900,
+        "platforms": [
+          {
+            "x": 0,
+            "y": 800,
+            "width": 250,
+            "height": 32,
+            "type": "ground"
+          },
+          {
+            "x": 350,
+            "y": 700,
+            "width": 180,
+            "height": 32,
+            "type": "floating"
+          }
+        ],
+        "enemies": [
+          {
+            "x": 600,
+            "y": 650,
+            "type": "drone",
+            "behavior": "chase",
+            "patrolRange": 300
+          }
+        ],
+        "collectibles": [
+          {
+            "x": 400,
+            "y": 650,
+            "type": "memory_chip",
+            "value": 1,
+            "required": false
+          }
+        ],
+        "goal": {
+          "x": 3300,
+          "y": 800
+        }
+      },
+      "mechanics": {
+        "introduced": [
+          "dash"
+        ],
+        "required": [
+          "wall_jump",
+          "dash",
+          "precision_timing"
+        ]
+      },
+      "estimatedCompletionTime": "4-5 minutes",
+      "skillRequirements": [
+        "wall_jump",
+        "dash",
+        "enemy_avoidance"
+      ]
+    },
+    {
+      "id": "level_3",
+      "name": "Central Server",
+      "difficulty": 7,
+      "theme": "tech_core",
+      "layout": {
+        "width": 4000,
+        "height": 1000,
+        "platforms": [
+          {
+            "x": 0,
+            "y": 900,
+            "width": 200,
+            "height": 32,
+            "type": "ground"
+          }
+        ],
+        "enemies": [
+          {
+            "x": 800,
+            "y": 700,
+            "type": "drone",
+            "behavior": "patrol",
+            "patrolRange": 150
+          },
+          {
+            "x": 1500,
+            "y": 600,
+            "type": "drone",
+            "behavior": "chase",
+            "patrolRange": 250
+          }
+        ],
+        "collectibles": [
+          {
+            "x": 900,
+            "y": 650,
+            "type": "memory_chip",
+            "value": 1,
+            "required": true
+          }
+        ],
+        "goal": {
+          "x": 3800,
+          "y": 900
+        }
+      },
+      "mechanics": {
+        "introduced": [],
+        "required": [
+          "wall_jump",
+          "dash",
+          "precise_platforming",
+          "enemy_timing"
+        ]
+      },
+      "estimatedCompletionTime": "6-8 minutes",
+      "skillRequirements": [
+        "mastery_of_all_mechanics"
+      ]
+    }
+  ],
+  "difficultyProgression": {
+    "curve": "gradual",
+    "description": "Level 1 introduces wall-jumping in safe environment. Level 2 adds dash and more enemies. Level 3 combines all mechanics with precise challenges."
+  },
+  "totalEstimatedPlaytime": 20
+}

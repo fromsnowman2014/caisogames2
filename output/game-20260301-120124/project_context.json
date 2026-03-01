@@ -1,0 +1,616 @@
+{
+  "project_id": "game-20260301-120124",
+  "version": "0.1.0",
+  "phase": "design",
+  "created_at": "2026-03-01T12:01:24.111496",
+  "user_request": "Create Ski Caiso, an endless 2D skiing game with procedural terrain. Player is a tiny hand-drawn skier sliding down infinite snowy slopes. Down key = pump for speed on downhills (Tiny Wings style), Up key = jump boost at hills, Left/Right keys = flip tricks. Perfect landing (matching slope angle) = speed bonus. Terrain: procedurally generated chunks using sine waves, infinite streaming, 6 difficulty tiers. Obstacles: rivers, cliffs, trees. Art: hand-drawn watercolor like Alto's Adventure, parallax backgrounds. HTML5 Canvas, custom physics, no libraries.",
+  "target_platform": [
+    "web"
+  ],
+  "target_audience": "",
+  "design": {
+    "concept": {
+      "title": "Ski Caiso",
+      "genre": "Endless Platformer",
+      "tagline": "Carve an endless, hand-painted mountain with rhythmic flow and stylish tricks.",
+      "coreLoop": [
+        "BUILD MOMENTUM: Press and hold 'Down' on downhill slopes to gain speed.",
+        "LAUNCH & TRICK: Release 'Down' and press 'Up' at the crest of a hill to jump, then use 'Left'/'Right' for flips.",
+        "STICK THE LANDING: Align your skier with the upcoming slope for a 'Perfect Landing' speed boost.",
+        "SURVIVE & REPEAT: Avoid obstacles and use your momentum to travel as far as possible."
+      ],
+      "playerAbilities": [
+        {
+          "id": "pump",
+          "name": "Pump",
+          "description": "Press and hold on a downhill slope to gain speed by compressing into the terrain.",
+          "unlockCondition": null
+        },
+        {
+          "id": "jump",
+          "name": "Jump Boost",
+          "description": "Press at the crest of a hill to use its curvature for a significant air boost.",
+          "unlockCondition": null
+        },
+        {
+          "id": "flip",
+          "name": "Flip",
+          "description": "Perform a backflip or frontflip while airborne for score and to fill the Flow meter.",
+          "unlockCondition": null
+        },
+        {
+          "id": "grind",
+          "name": "Grind",
+          "description": "Land on fallen logs or special rails to maintain speed and earn a large bonus.",
+          "unlockCondition": "Reach 3000 meters in a single run."
+        },
+        {
+          "id": "glide",
+          "name": "Glide",
+          "description": "Hold the jump button mid-air to deploy a small wingsuit, extending airtime to cross large chasms.",
+          "unlockCondition": "Land 25 perfect landings in total."
+        }
+      ],
+      "progressionSystem": {
+        "type": "linear",
+        "unlockMechanism": "Players unlock new permanent abilities and cosmetic items by reaching distance milestones and completing in-run challenges (e.g., 'Perform 3 backflips in one jump')."
+      },
+      "mechanics": {
+        "primary": [
+          "Rhythm-based Pumping (Tiny Wings style)",
+          "Slope-Matching Perfect Landings"
+        ],
+        "secondary": [
+          "Aerial Flip Tricks",
+          "Obstacle Avoidance (trees, rivers, cliffs)"
+        ],
+        "unique": [
+          "'Flow State' Meter: Consecutive perfect landings and tricks fill a meter that, when activated, provides a temporary massive speed boost and invincibility to minor obstacles."
+        ]
+      },
+      "difficultyCurve": {
+        "type": "gradual",
+        "description": "Difficulty increases in six tiers based on distance. New obstacles and more complex terrain combinations are introduced every few thousand meters, creating a steady but noticeable challenge ramp that tests mastery of learned skills."
+      },
+      "winCondition": "As an endless game, the goal is to achieve the highest possible distance score. 'Winning' is defined by completing all challenges, unlocking all abilities, and setting a personal best on the leaderboard.",
+      "loseCondition": "The run ends when the player's forward momentum stops completely (crashing into a tree, falling in a river, failing to clear a steep uphill slope) or falling into a bottomless chasm.",
+      "estimatedPlaytime": "Average run: 2-5 minutes. Time to unlock all content: 5-8 hours."
+    },
+    "designRationale": "The design focuses on a highly satisfying 'flow' state, rewarding skillful play with speed and visual feedback. The core loop is simple enough for casual players (inspired by 'Tiny Wings' and 'Alto's Adventure') but the 'Perfect Landing' and 'Flow State' mechanics provide a high skill ceiling for long-term engagement. The procedural generation and reusable mechanics make it feasible for a small team or AI-assisted development within a 2-4 week timeframe. The watercolor art style is achievable and provides a premium, polished feel on a budget. Simple two-button controls (one for down, one for up/actions) are perfect for web and easily adaptable to mobile touch screens.",
+    "referenceGames": [
+      "Alto's Adventure",
+      "Tiny Wings",
+      "SSX (series)"
+    ],
+    "levels": {
+      "levels": [
+        {
+          "id": "level_1",
+          "name": "Pinecone Pass",
+          "difficulty": 1,
+          "theme": "snowy_forest",
+          "layout": {
+            "width": 3000,
+            "height": 600,
+            "platforms": [
+              {
+                "x": 0,
+                "y": 500,
+                "width": 300,
+                "height": 100,
+                "type": "ground"
+              },
+              {
+                "x": 300,
+                "y": 520,
+                "width": 400,
+                "height": 80,
+                "type": "ground"
+              },
+              {
+                "x": 700,
+                "y": 560,
+                "width": 300,
+                "height": 40,
+                "type": "ground"
+              },
+              {
+                "x": 1000,
+                "y": 520,
+                "width": 150,
+                "height": 80,
+                "type": "ground"
+              },
+              {
+                "x": 1150,
+                "y": 480,
+                "width": 100,
+                "height": 120,
+                "type": "ground"
+              },
+              {
+                "x": 1400,
+                "y": 550,
+                "width": 600,
+                "height": 50,
+                "type": "ground"
+              },
+              {
+                "x": 2000,
+                "y": 580,
+                "width": 300,
+                "height": 20,
+                "type": "ground"
+              },
+              {
+                "x": 2300,
+                "y": 540,
+                "width": 150,
+                "height": 60,
+                "type": "ground"
+              },
+              {
+                "x": 2450,
+                "y": 500,
+                "width": 100,
+                "height": 100,
+                "type": "ground"
+              },
+              {
+                "x": 2650,
+                "y": 550,
+                "width": 350,
+                "height": 50,
+                "type": "ground"
+              }
+            ],
+            "enemies": [],
+            "collectibles": [
+              {
+                "x": 1200,
+                "y": 380,
+                "type": "flow_crystal",
+                "value": 10,
+                "required": false
+              },
+              {
+                "x": 1275,
+                "y": 360,
+                "type": "flow_crystal",
+                "value": 10,
+                "required": false
+              },
+              {
+                "x": 1350,
+                "y": 380,
+                "type": "flow_crystal",
+                "value": 10,
+                "required": false
+              },
+              {
+                "x": 2500,
+                "y": 400,
+                "type": "flow_crystal",
+                "value": 10,
+                "required": false
+              }
+            ],
+            "goal": {
+              "x": 2950,
+              "y": 500
+            }
+          },
+          "mechanics": {
+            "introduced": [
+              "Pump",
+              "Jump Boost"
+            ],
+            "required": [
+              "Pump",
+              "Jump Boost"
+            ]
+          },
+          "estimatedCompletionTime": "1-2 minutes",
+          "skillRequirements": [
+            "Pump",
+            "Jump Boost"
+          ]
+        },
+        {
+          "id": "level_2",
+          "name": "Logjam Ledge",
+          "difficulty": 4,
+          "theme": "forest_ravine",
+          "layout": {
+            "width": 4000,
+            "height": 800,
+            "platforms": [
+              {
+                "x": 0,
+                "y": 600,
+                "width": 400,
+                "height": 200,
+                "type": "ground"
+              },
+              {
+                "x": 400,
+                "y": 650,
+                "width": 500,
+                "height": 150,
+                "type": "ground"
+              },
+              {
+                "x": 900,
+                "y": 600,
+                "width": 150,
+                "height": 200,
+                "type": "ground"
+              },
+              {
+                "x": 1300,
+                "y": 650,
+                "width": 200,
+                "height": 150,
+                "type": "ground"
+              },
+              {
+                "x": 1500,
+                "y": 620,
+                "width": 400,
+                "height": 20,
+                "type": "grind_rail"
+              },
+              {
+                "x": 1900,
+                "y": 650,
+                "width": 200,
+                "height": 150,
+                "type": "ground"
+              },
+              {
+                "x": 2200,
+                "y": 550,
+                "width": 150,
+                "height": 32,
+                "type": "floating"
+              },
+              {
+                "x": 2500,
+                "y": 500,
+                "width": 150,
+                "height": 32,
+                "type": "floating"
+              },
+              {
+                "x": 2800,
+                "y": 580,
+                "width": 500,
+                "height": 220,
+                "type": "ground"
+              },
+              {
+                "x": 3300,
+                "y": 620,
+                "width": 300,
+                "height": 180,
+                "type": "ground"
+              },
+              {
+                "x": 3600,
+                "y": 580,
+                "width": 100,
+                "height": 220,
+                "type": "ground"
+              },
+              {
+                "x": 3800,
+                "y": 600,
+                "width": 200,
+                "height": 200,
+                "type": "ground"
+              }
+            ],
+            "enemies": [
+              {
+                "x": 1350,
+                "y": 620,
+                "type": "porcupine",
+                "behavior": "patrol",
+                "patrolRange": 50
+              },
+              {
+                "x": 2900,
+                "y": 550,
+                "type": "porcupine",
+                "behavior": "patrol",
+                "patrolRange": 150
+              },
+              {
+                "x": 3400,
+                "y": 590,
+                "type": "porcupine",
+                "behavior": "patrol",
+                "patrolRange": 100
+              }
+            ],
+            "collectibles": [
+              {
+                "x": 1150,
+                "y": 450,
+                "type": "score_gem",
+                "value": 50,
+                "required": false
+              },
+              {
+                "x": 1650,
+                "y": 590,
+                "type": "flow_crystal",
+                "value": 10,
+                "required": false
+              },
+              {
+                "x": 2350,
+                "y": 400,
+                "type": "score_gem",
+                "value": 100,
+                "required": false
+              }
+            ],
+            "goal": {
+              "x": 3900,
+              "y": 550
+            }
+          },
+          "mechanics": {
+            "introduced": [
+              "Flip",
+              "Grind"
+            ],
+            "required": [
+              "Pump",
+              "Jump Boost",
+              "Flip",
+              "Grind"
+            ]
+          },
+          "estimatedCompletionTime": "2-4 minutes",
+          "skillRequirements": [
+            "Pump",
+            "Jump Boost",
+            "Flip",
+            "Grind",
+            "Obstacle Avoidance"
+          ]
+        },
+        {
+          "id": "level_3",
+          "name": "Glacier Gap",
+          "difficulty": 7,
+          "theme": "alpine_glacier",
+          "layout": {
+            "width": 5000,
+            "height": 1000,
+            "platforms": [
+              {
+                "x": 0,
+                "y": 700,
+                "width": 300,
+                "height": 300,
+                "type": "ground"
+              },
+              {
+                "x": 300,
+                "y": 750,
+                "width": 500,
+                "height": 250,
+                "type": "ground"
+              },
+              {
+                "x": 800,
+                "y": 700,
+                "width": 150,
+                "height": 300,
+                "type": "ground"
+              },
+              {
+                "x": 1600,
+                "y": 800,
+                "width": 200,
+                "height": 200,
+                "type": "floating"
+              },
+              {
+                "x": 2000,
+                "y": 750,
+                "width": 200,
+                "height": 250,
+                "type": "floating"
+              },
+              {
+                "x": 2400,
+                "y": 700,
+                "width": 200,
+                "height": 300,
+                "type": "floating"
+              },
+              {
+                "x": 2900,
+                "y": 650,
+                "width": 400,
+                "height": 20,
+                "type": "grind_rail"
+              },
+              {
+                "x": 3300,
+                "y": 680,
+                "width": 150,
+                "height": 320,
+                "type": "ground"
+              },
+              {
+                "x": 4400,
+                "y": 750,
+                "width": 600,
+                "height": 250,
+                "type": "ground"
+              }
+            ],
+            "enemies": [
+              {
+                "x": 1700,
+                "y": 300,
+                "type": "falling_icicle",
+                "behavior": "stationary",
+                "patrolRange": 0
+              },
+              {
+                "x": 2100,
+                "y": 300,
+                "type": "falling_icicle",
+                "behavior": "stationary",
+                "patrolRange": 0
+              },
+              {
+                "x": 2500,
+                "y": 300,
+                "type": "falling_icicle",
+                "behavior": "stationary",
+                "patrolRange": 0
+              },
+              {
+                "x": 4500,
+                "y": 720,
+                "type": "ice_spikes",
+                "behavior": "stationary",
+                "patrolRange": 0
+              }
+            ],
+            "collectibles": [
+              {
+                "x": 1200,
+                "y": 600,
+                "type": "flow_crystal",
+                "value": 10,
+                "required": false
+              },
+              {
+                "x": 1300,
+                "y": 580,
+                "type": "flow_crystal",
+                "value": 10,
+                "required": false
+              },
+              {
+                "x": 1400,
+                "y": 600,
+                "type": "flow_crystal",
+                "value": 10,
+                "required": false
+              },
+              {
+                "x": 3800,
+                "y": 500,
+                "type": "score_gem",
+                "value": 250,
+                "required": false
+              }
+            ],
+            "goal": {
+              "x": 4900,
+              "y": 700
+            }
+          },
+          "mechanics": {
+            "introduced": [
+              "Glide",
+              "Flow State"
+            ],
+            "required": [
+              "Pump",
+              "Jump Boost",
+              "Flip",
+              "Grind",
+              "Glide"
+            ]
+          },
+          "estimatedCompletionTime": "3-5 minutes",
+          "skillRequirements": [
+            "All Mechanics Mastery",
+            "Precision Air Control",
+            "Flow State Management"
+          ]
+        }
+      ],
+      "difficultyProgression": {
+        "curve": "gradual",
+        "description": "Difficulty increases by introducing one or two core mechanics per level in a safe environment, then combining them in subsequent levels. Level 1 focuses on the core momentum loop. Level 2 adds tricks and environmental interaction (grinding). Level 3 requires mastery of all mechanics, including advanced air control with the glider, to navigate significant hazards and large gaps."
+      },
+      "totalEstimatedPlaytime": 10
+    },
+    "narrative": {
+      "worldSetting": {
+        "name": "Mount Solas",
+        "description": "A majestic, sentient mountain that has fallen into a deep slumber, its vibrant, hand-painted colors faded to monochrome.",
+        "lore": "Mount Solas was once the heart of the world, a beacon of joy and color. A mysterious, silent force known only as 'The Stillness' has lulled it to sleep, and only a rider with true 'flow' can reawaken its spirit."
+      },
+      "characters": {
+        "protagonist": {
+          "name": "Kai",
+          "description": "A young, nimble skier with a bright, flowing scarf that trails color like a paintbrush.",
+          "personality": [
+            "energetic",
+            "optimistic",
+            "adventurous"
+          ],
+          "motivation": "To reawaken the sleeping mountain and bring its beautiful colors back to the world.",
+          "backstory": "Kai grew up hearing tales of the vibrant Mount Solas and feels a deep connection to its silent slopes."
+        },
+        "npcs": [
+          {
+            "name": "The Elder Pine",
+            "description": "An ancient, snow-covered pine tree at the start of the run, with a kind, gentle face formed in its bark.",
+            "personality": [
+              "wise",
+              "encouraging"
+            ],
+            "role": "mentor"
+          }
+        ]
+      },
+      "dialogue": {
+        "tutorial": [
+          "Tap to jump over obstacles!",
+          "Land stylish tricks to build your Flow Meter.",
+          "Let's bring some color back to this world!"
+        ],
+        "levelIntros": {
+          "level_1": "The forest is hushed. Let's wake it up!",
+          "level_2": "Deeper now... The mountain feels your rhythm.",
+          "level_3": "The summit glows! Ride the light!"
+        },
+        "npcLines": {
+          "npc_1": {
+            "name": "The Elder Pine",
+            "lines": [
+              "Hello, little spark. The mountain slumbers.",
+              "Your energy... it can paint the world anew.",
+              "Carve with joy. Let your spirit flow!"
+            ]
+          }
+        }
+      },
+      "storyBeats": {
+        "opening": "Kai arrives at the base of the silent, colorless Mount Solas. The Elder Pine senses Kai's vibrant spirit and asks them to ride down the endless slope to reawaken the mountain with their flow.",
+        "midpoint": "As Kai carves down the mountain, their scarf leaves trails of brilliant color, and the world around them slowly begins to bloom with life and sound, pushing back The Stillness.",
+        "climax": "Reaching the highest 'Flow State' causes the entire mountain to pulse with radiant color, fully awakened and alive with energy, music, and light.",
+        "resolution": "With the mountain awake, the goal becomes a celebration: to keep its spirit alive by carving the most stylish and joyful line possible, setting new records, and ensuring The Stillness never returns."
+      }
+    }
+  },
+  "assets": {},
+  "style_guide": {},
+  "code": {},
+  "quality": {},
+  "build": {},
+  "metadata": {}
+}

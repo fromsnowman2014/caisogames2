@@ -12,14 +12,14 @@ GEMINI_TEXT_ENDPOINT = f"{VERCEL_PROXY_URL}/api/gemini/generate"
 GEMINI_IMAGEN_ENDPOINT = f"{VERCEL_PROXY_URL}/api/gemini/imagen"
 GEMINI_VISION_ENDPOINT = f"{VERCEL_PROXY_URL}/api/gemini/vision"
 
-# Default Models
-GEMINI_PRO_MODEL = "gemini-2.0-pro-exp"
-GEMINI_FLASH_MODEL = "gemini-2.0-flash-exp"
-IMAGEN_4_MODEL = "imagen-4.0-generate-001"
+# Default Models (Updated 2026-03-01)
+GEMINI_PRO_MODEL = "gemini-2.5-pro"  # Best model for complex reasoning
+GEMINI_FLASH_MODEL = "gemini-2.5-flash"  # Fast model for general tasks
+IMAGEN_4_MODEL = "imagen-4.0-generate-001"  # For image generation
 
 # Generation Defaults
 DEFAULT_TEMPERATURE = 0.7
-DEFAULT_MAX_TOKENS = 4000
+DEFAULT_MAX_TOKENS = 8000
 
 # Quality Thresholds
 DESIGN_QUALITY_THRESHOLD = 90

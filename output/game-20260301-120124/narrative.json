@@ -1,0 +1,59 @@
+{
+  "worldSetting": {
+    "name": "Mount Solas",
+    "description": "A majestic, sentient mountain that has fallen into a deep slumber, its vibrant, hand-painted colors faded to monochrome.",
+    "lore": "Mount Solas was once the heart of the world, a beacon of joy and color. A mysterious, silent force known only as 'The Stillness' has lulled it to sleep, and only a rider with true 'flow' can reawaken its spirit."
+  },
+  "characters": {
+    "protagonist": {
+      "name": "Kai",
+      "description": "A young, nimble skier with a bright, flowing scarf that trails color like a paintbrush.",
+      "personality": [
+        "energetic",
+        "optimistic",
+        "adventurous"
+      ],
+      "motivation": "To reawaken the sleeping mountain and bring its beautiful colors back to the world.",
+      "backstory": "Kai grew up hearing tales of the vibrant Mount Solas and feels a deep connection to its silent slopes."
+    },
+    "npcs": [
+      {
+        "name": "The Elder Pine",
+        "description": "An ancient, snow-covered pine tree at the start of the run, with a kind, gentle face formed in its bark.",
+        "personality": [
+          "wise",
+          "encouraging"
+        ],
+        "role": "mentor"
+      }
+    ]
+  },
+  "dialogue": {
+    "tutorial": [
+      "Tap to jump over obstacles!",
+      "Land stylish tricks to build your Flow Meter.",
+      "Let's bring some color back to this world!"
+    ],
+    "levelIntros": {
+      "level_1": "The forest is hushed. Let's wake it up!",
+      "level_2": "Deeper now... The mountain feels your rhythm.",
+      "level_3": "The summit glows! Ride the light!"
+    },
+    "npcLines": {
+      "npc_1": {
+        "name": "The Elder Pine",
+        "lines": [
+          "Hello, little spark. The mountain slumbers.",
+          "Your energy... it can paint the world anew.",
+          "Carve with joy. Let your spirit flow!"
+        ]
+      }
+    }
+  },
+  "storyBeats": {
+    "opening": "Kai arrives at the base of the silent, colorless Mount Solas. The Elder Pine senses Kai's vibrant spirit and asks them to ride down the endless slope to reawaken the mountain with their flow.",
+    "midpoint": "As Kai carves down the mountain, their scarf leaves trails of brilliant color, and the world around them slowly begins to bloom with life and sound, pushing back The Stillness.",
+    "climax": "Reaching the highest 'Flow State' causes the entire mountain to pulse with radiant color, fully awakened and alive with energy, music, and light.",
+    "resolution": "With the mountain awake, the goal becomes a celebration: to keep its spirit alive by carving the most stylish and joyful line possible, setting new records, and ensuring The Stillness never returns."
+  }
+}
