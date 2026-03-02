@@ -57,6 +57,21 @@ export class GameLoader {
             }
 
             const config = await response.json();
+
+            // Convert relative paths to absolute paths
+            if (config.entryPoint && !config.entryPoint.startsWith('/')) {
+                config.entryPoint = `${this.gamesPath}/${gameId}/${config.entryPoint}`;
+            }
+            if (config.thumbnail && !config.thumbnail.startsWith('/')) {
+                config.thumbnail = `${this.gamesPath}/${gameId}/${config.thumbnail}`;
+            }
+            if (config.banner && !config.banner.startsWith('/')) {
+                config.banner = `${this.gamesPath}/${gameId}/${config.banner}`;
+            }
+            if (config.icon && !config.icon.startsWith('/')) {
+                config.icon = `${this.gamesPath}/${gameId}/${config.icon}`;
+            }
+
             return config;
         } catch (error) {
             console.warn(`Failed to load config for ${gameId}, using defaults:`, error);
