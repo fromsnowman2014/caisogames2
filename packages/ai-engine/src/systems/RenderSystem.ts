@@ -9,7 +9,7 @@ import { Transform } from '../components/Transform';
 import { Sprite } from '../components/Sprite';
 
 export class RenderSystem extends System {
-  update(deltaTime: number, entities: Entity[]): void {
+  update(_deltaTime: number, entities: Entity[]): void {
     const engine = Engine.getInstance();
     const ctx = engine.getContext();
 

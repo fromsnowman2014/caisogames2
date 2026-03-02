@@ -14,7 +14,7 @@ interface CollisionResult {
 }
 
 export class CollisionSystem extends System {
-  update(deltaTime: number, entities: Entity[]): void {
+  update(_deltaTime: number, entities: Entity[]): void {
     const physicsEntities = this.filterEntities(entities, Transform, Physics);
 
     // Broad phase: check all pairs
