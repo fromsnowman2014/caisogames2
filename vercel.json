@@ -5,6 +5,18 @@
     {
       "src": "api/**/*.js",
       "use": "@vercel/node"
+    },
+    {
+      "src": "launcher/**/*",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "games/**/*",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "index.html",
+      "use": "@vercel/static"
     }
   ],
   "env": {
@@ -25,6 +37,15 @@
         {
           "key": "Access-Control-Allow-Headers",
           "value": "Content-Type"
+        }
+      ]
+    },
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=3600, s-maxage=3600"
         }
       ]
     }

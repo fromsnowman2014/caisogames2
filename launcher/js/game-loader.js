@@ -6,7 +6,8 @@
 export class GameLoader {
     constructor() {
         this.games = [];
-        this.gamesPath = '../games';
+        // Use absolute path from root for production compatibility
+        this.gamesPath = '/games';
     }
 
     /**
