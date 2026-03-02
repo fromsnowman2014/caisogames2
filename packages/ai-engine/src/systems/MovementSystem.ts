@@ -20,13 +20,10 @@ export class MovementSystem extends System {
   }
 
   update(deltaTime: number, entities: Entity[]): void {
-    const dt = deltaTime / 1000; // Convert to seconds
-
     // Filter entities with Transform, Physics, and PlayerController
     const players = this.filterEntities(entities, Transform, Physics, PlayerController);
 
     for (const player of players) {
-      const transform = player.getComponent(Transform)!;
       const physics = player.getComponent(Physics)!;
       const controller = player.getComponent(PlayerController)!;
 
@@ -77,7 +74,7 @@ export class MovementSystem extends System {
 
       // Dash
       if (this.keys.has('shift') && controller.canDash &&
-          !controller.isDashing && controller.dashCooldownRemaining <= 0) {
+        !controller.isDashing && controller.dashCooldownRemaining <= 0) {
         controller.isDashing = true;
         controller.dashTimeRemaining = controller.dashDuration;
         controller.dashCooldownRemaining = controller.dashCooldown;
