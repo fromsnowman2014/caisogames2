@@ -1,27 +1,4 @@
 {
-  "version": 2,
-  "name": "caisogames2",
-  "builds": [
-    {
-      "src": "api/**/*.js",
-      "use": "@vercel/node"
-    },
-    {
-      "src": "launcher/**/*",
-      "use": "@vercel/static"
-    },
-    {
-      "src": "games/**/*",
-      "use": "@vercel/static"
-    },
-    {
-      "src": "index.html",
-      "use": "@vercel/static"
-    }
-  ],
-  "env": {
-    "NODE_ENV": "production"
-  },
   "headers": [
     {
       "source": "/api/(.*)",
