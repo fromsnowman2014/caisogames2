@@ -134,10 +134,71 @@ export class Game {
         ctx.translate(this.skier.x, this.skier.y);
         ctx.rotate(this.skier.angle);
 
-        ctx.fillStyle = '#FF0000';
-        ctx.fillRect(-16, -16, 32, 32);
+        // Draw skier silhouette (side view, facing right)
+        this._drawSkierSprite(ctx);
 
         ctx.restore();
+    }
+
+    _drawSkierSprite(ctx) {
+        // Simple skier sprite (side profile facing right)
+        // Colors: Bright outfit for visibility on snow
+
+        // Body (torso) - Blue jacket
+        ctx.fillStyle = '#2E86DE';
+        ctx.fillRect(-8, -6, 16, 12);
+
+        // Head - Skin tone
+        ctx.fillStyle = '#FFA07A';
+        ctx.beginPath();
+        ctx.arc(-4, -12, 6, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Helmet - Red for visibility
+        ctx.fillStyle = '#EE5A6F';
+        ctx.beginPath();
+        ctx.arc(-4, -14, 7, Math.PI, Math.PI * 2);
+        ctx.fill();
+
+        // Goggles - Black
+        ctx.fillStyle = '#000';
+        ctx.fillRect(-8, -13, 6, 3);
+
+        // Arms - extended forward (skiing pose)
+        ctx.strokeStyle = '#2E86DE';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(-6, -2);
+        ctx.lineTo(8, -4);
+        ctx.stroke();
+
+        // Legs - bent (skiing stance)
+        ctx.strokeStyle = '#34495E'; // Dark pants
+        ctx.lineWidth = 4;
+
+        // Front leg
+        ctx.beginPath();
+        ctx.moveTo(-2, 6);
+        ctx.lineTo(4, 14);
+        ctx.stroke();
+
+        // Back leg (slightly behind)
+        ctx.beginPath();
+        ctx.moveTo(-6, 6);
+        ctx.lineTo(-2, 14);
+        ctx.stroke();
+
+        // Skis - Orange/Yellow for visibility
+        ctx.fillStyle = '#FFA500';
+        ctx.fillRect(-6, 14, 16, 3); // Single long ski (simplified)
+
+        // Ski poles - Black
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(8, -4);
+        ctx.lineTo(10, 8);
+        ctx.stroke();
     }
 
     _renderHUD() {
