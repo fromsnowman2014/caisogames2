@@ -11,7 +11,7 @@ export class Physics {
         this.pumpMultiplier = 2.0;    // Down key gravity boost
         this.friction = 0.02;         // Snow friction coefficient
         this.airResistance = 0.995;   // Air drag per frame
-        this.jumpImpulse = 650;       // Up key vertical impulse (px/s)
+        this.jumpBoost = 1.5;         // Jump boost multiplier (2x total height with momentum)
         this.maxSpeed = 2000;         // Maximum speed (px/s)
         this.angularSpeed = 8.0;      // Rotation speed (rad/s)
         this.angularDamping = 0.98;   // Angular velocity decay
@@ -83,9 +83,10 @@ export class Physics {
             state.vy = (nextY - currentY) / dt;
         }
 
-        // Jump input (Design Doc Section 4)
-        if (input.up) {
+        // Jump input (Design Doc Section 4) - one-time trigger
+        if (input.jumpPressed && state.grounded) {
             this._jump(state, slopeAngle);
+            input.jumpPressed = false; // Consume jump input
         }
 
         // Update position
@@ -125,18 +126,27 @@ export class Physics {
     }
 
     /**
-     * Execute jump
+     * Execute jump - gives a boost when leaving hills
+     * Jump button amplifies natural trajectory by ~2x
      * @private
      */
     _jump(state, slopeAngle) {
-        // Calculate jump vector perpendicular to slope
-        const jumpAngle = slopeAngle - Math.PI / 2; // 90° from slope
-        const jumpVx = Math.cos(jumpAngle) * this.jumpImpulse;
-        const jumpVy = Math.sin(jumpAngle) * this.jumpImpulse;
+        // Only boost upward velocity (when slope creates natural lift)
+        // This makes jump feel like "helping" natural momentum
 
-        // Add jump impulse to current velocity
-        state.vx += jumpVx;
-        state.vy += jumpVy;
+        // Calculate perpendicular direction to slope
+        const perpAngle = slopeAngle - Math.PI / 2;
+
+        // Get current velocity magnitude
+        const currentSpeed = Math.sqrt(state.vx * state.vx + state.vy * state.vy);
+
+        // Jump boost proportional to speed (faster = higher jump)
+        // Base boost is small, scales with speed for natural feel
+        const jumpMagnitude = Math.max(currentSpeed * 0.3, 150);
+
+        // Apply boost perpendicular to slope (feels like pushing off)
+        state.vx += Math.cos(perpAngle) * jumpMagnitude * this.jumpBoost;
+        state.vy += Math.sin(perpAngle) * jumpMagnitude * this.jumpBoost;
 
         // Set airborne
         state.grounded = false;

@@ -65,6 +65,19 @@ export class TerrainGenerator {
             freq3 = 0.030
         } = params;
 
+        // First chunk: Start at PEAK (highest point) for gravity assist
+        if (chunkIndex === 0) {
+            // Create a smooth descent from peak
+            const relativeX = x; // x starts at 0 for first chunk
+            const progress = relativeX / this.chunkWidth;
+
+            // Start high, descend smoothly (quarter sine wave)
+            const peakHeight = baseY - amp1 * 1.5; // Start 1.5x amplitude above baseline
+            const descentCurve = Math.sin((1 - progress) * Math.PI / 2); // 1.0 -> 0.0 curve
+
+            return peakHeight + (baseY - peakHeight) * (1 - descentCurve);
+        }
+
         // Chunk-specific seed for variation
         const chunkSeed = this.seed + chunkIndex * 13.7;
 

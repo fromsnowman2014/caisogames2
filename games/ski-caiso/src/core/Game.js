@@ -14,10 +14,15 @@ export class Game {
         this.physics = new Physics();
         this.difficultyManager = new DifficultyManager();
         this.chunkManager = new ChunkManager(this.difficultyManager);
-        this.skier = new Skier(200, 300);
+
+        // Start at peak of first hill (x=50 to be near start)
+        // Y will be calculated from terrain
+        const startX = 50;
+        const startY = 250; // Initial estimate, will snap to terrain
+        this.skier = new Skier(startX, startY);
         this.camera = new Camera(this.width, this.height);
 
-        this.input = { down: false, up: false, left: false, right: false };
+        this.input = { down: false, up: false, left: false, right: false, jumpPressed: false };
         this.running = false;
         this.lastTime = 0;
 
@@ -27,14 +32,20 @@ export class Game {
     _setupInput() {
         window.addEventListener('keydown', (e) => {
             if (e.key === 'ArrowDown') this.input.down = true;
-            if (e.key === 'ArrowUp' || e.key === ' ') this.input.up = true;
+            if ((e.key === 'ArrowUp' || e.key === ' ') && !this.input.up) {
+                this.input.up = true;
+                this.input.jumpPressed = true; // One-time jump trigger
+            }
             if (e.key === 'ArrowLeft') this.input.left = true;
             if (e.key === 'ArrowRight') this.input.right = true;
         });
 
         window.addEventListener('keyup', (e) => {
             if (e.key === 'ArrowDown') this.input.down = false;
-            if (e.key === 'ArrowUp' || e.key === ' ') this.input.up = false;
+            if (e.key === 'ArrowUp' || e.key === ' ') {
+                this.input.up = false;
+                this.input.jumpPressed = false;
+            }
             if (e.key === 'ArrowLeft') this.input.left = false;
             if (e.key === 'ArrowRight') this.input.right = false;
         });
@@ -43,6 +54,13 @@ export class Game {
     start() {
         this.running = true;
         this.lastTime = performance.now();
+
+        // Snap skier to terrain at start position
+        const terrainY = this.chunkManager.getTerrainYAt(this.skier.x);
+        if (terrainY !== null) {
+            this.skier.y = terrainY;
+        }
+
         this._gameLoop();
     }
 
