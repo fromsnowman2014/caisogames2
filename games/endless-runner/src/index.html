@@ -29,11 +29,14 @@
     user-select: none;
     touch-action: none;
     position: fixed;
-    inset: 0;
+    /* Explicit offsets rather than `inset`, which iOS Safari only understands
+       from 14.5. On an older phone `inset` is dropped and the container
+       collapses, which is one way to end up staring at a blank screen. */
+    top: 0; left: 0; right: 0; bottom: 0;
   }
   #wrap {
     position: absolute;
-    inset: 0;
+    top: 0; left: 0; right: 0; bottom: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -48,9 +51,33 @@
     background: #87CEEB;
     box-shadow: 0 10px 40px rgba(0,0,0,0.5);
     touch-action: none;
-    /* JS sizes this to the largest 4:3 box that fits, so the game keeps its
-       aspect ratio on every phone instead of stretching. */
+    /* IMPORTANT: this is a working CSS fallback, not decoration. JS refines it
+       to an exact pixel box, but if the sizing code ever fails to run the
+       canvas must still be visible and correctly proportioned - width:100%
+       with height:auto preserves the 800x600 intrinsic ratio on its own.
+       Without this the canvas has no CSS size at all and renders as nothing. */
+    width: 100%;
+    max-width: 100vw;
+    height: auto;
+    max-height: 100%;
   }
+  /* Shown only if the game fails to start, so a failure is never a silent
+     blank screen. */
+  #err {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    z-index: 99;
+    background: #1b2b3a;
+    color: #ffd7d7;
+    font: 13px/1.5 ui-monospace, Menlo, Consolas, monospace;
+    padding: 18px;
+    overflow: auto;
+    white-space: pre-wrap;
+    -webkit-user-select: text;
+    user-select: text;
+  }
+  #err b { color: #fff; font: bold 16px/1.6 "Trebuchet MS", sans-serif; }
   #hint {
     text-align: center;
     color: #9fb6c9;
@@ -68,6 +95,52 @@
   <canvas id="game" width="800" height="600"></canvas>
   <div id="hint">SPACE / UP / W or TAP to jump &mdash; hold longer to jump higher</div>
 </div>
+<div id="err"></div>
+
+<!-- If the page is opened by something that does not execute scripts - iOS
+     Quick Look previewing a downloaded .html, or an in-app file viewer - the
+     canvas would otherwise render as a featureless blue rectangle with no
+     explanation. Say so instead. -->
+<noscript>
+  <div style="position:fixed;top:0;left:0;right:0;bottom:0;z-index:100;
+              background:#1b2b3a;color:#fff;padding:26px;
+              font:16px/1.6 'Trebuchet MS',sans-serif">
+    <b style="font-size:20px">JavaScript is switched off</b>
+    <p>Turbo Dash is a JavaScript game, so all you will see here is a blank
+       blue square.</p>
+    <p>If you opened this file from Files, Mail or a chat app, it is being
+       shown by a preview that cannot run scripts. Tap the share icon and
+       choose <b>Open in Safari</b>, or serve the file over http:// instead
+       of opening it directly.</p>
+  </div>
+</noscript>
+
+<script>
+/* Catch failures BEFORE the game script parses, so that even a syntax error or
+   an unsupported API surfaces as readable text instead of a blank screen.
+   A silent blank page is the single worst failure mode on a phone, where there
+   is no console to check. */
+(function () {
+  function show(msg) {
+    var el = document.getElementById("err");
+    if (!el) return;
+    el.style.display = "block";
+    el.innerHTML = "<b>Turbo Dash could not start</b>\n\n" +
+      String(msg).replace(/[<>&]/g, function (c) {
+        return { "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c];
+      }) +
+      "\n\nUA: " + navigator.userAgent;
+  }
+  window.addEventListener("error", function (e) {
+    show((e && e.message ? e.message : "Unknown error") +
+         (e && e.filename ? "\nat " + e.filename + ":" + e.lineno : ""));
+  });
+  window.addEventListener("unhandledrejection", function (e) {
+    show("Unhandled promise rejection: " + (e && e.reason));
+  });
+  window.__gameFailed = show;
+})();
+</script>
 
 <script>
 "use strict";
@@ -327,9 +400,15 @@ document.addEventListener("mouseup", () => { if (!usingTouch) releaseJump(); });
 function resizeCanvas() {
   const wrap = document.getElementById("wrap");
   const hint = document.getElementById("hint");
+  if (!wrap) return;
+
   const style = getComputedStyle(wrap);
-  const padX = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
-  const padY = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+  // env(safe-area-inset-*) resolves to an empty string on browsers that do not
+  // support it, and parseFloat("") is NaN. One NaN here poisons the whole
+  // calculation and the canvas ends up with an invalid size, i.e. invisible.
+  const num = v => { const n = parseFloat(v); return isFinite(n) ? n : 0; };
+  const padX = num(style.paddingLeft) + num(style.paddingRight);
+  const padY = num(style.paddingTop) + num(style.paddingBottom);
 
   // Decide what the hint says (and whether it shows) BEFORE measuring it,
   // otherwise we size the canvas against a stale hint height.
@@ -346,13 +425,26 @@ function resizeCanvas() {
     }
   }
 
-  const availW = wrap.clientWidth - padX;
-  const hintH = hint && hint.offsetParent !== null ? hint.offsetHeight + 8 : 0;
-  const availH = wrap.clientHeight - padY - hintH;
+  // Fall back to the viewport if the container reports nothing useful. iOS
+  // Safari can report a zero-height container on the very first layout pass,
+  // while its toolbar is still settling.
+  const boxW = wrap.clientWidth  || window.innerWidth  || 800;
+  const boxH = wrap.clientHeight || window.innerHeight || 600;
 
-  const scale = Math.min(availW / W, availH / H);
-  canvas.style.width  = Math.floor(W * scale) + "px";
-  canvas.style.height = Math.floor(H * scale) + "px";
+  const availW = boxW - padX;
+  const hintH = hint && hint.offsetParent !== null ? hint.offsetHeight + 8 : 0;
+  const availH = boxH - padY - hintH;
+
+  let scale = Math.min(availW / W, availH / H);
+  // A non-finite or non-positive scale would produce an invalid CSS length,
+  // which the browser silently discards - leaving a blank screen. Refuse to
+  // emit one; keep the CSS fallback sizing instead.
+  if (!isFinite(scale) || scale <= 0) return;
+
+  canvas.style.width  = Math.max(1, Math.floor(W * scale)) + "px";
+  canvas.style.height = Math.max(1, Math.floor(H * scale)) + "px";
+  canvas.style.maxWidth = "none";     // release the CSS fallback constraints
+  canvas.style.maxHeight = "none";
   // Rounded corners look wrong once the game fills a phone screen edge to edge.
   canvas.style.borderRadius = scale < 0.75 ? "0" : "10px";
 }
@@ -2191,10 +2283,39 @@ function restart() {
   seedBackground();
 }
 
-loadSave();
-restart();
-resizeCanvas();
-requestAnimationFrame(loop);
+/**
+ * Boot.
+ *
+ * Wrapped in try/catch and paired with a synchronous first render, because on
+ * a phone there is no console: if anything here throws, the only symptom the
+ * player gets is a blank coloured rectangle. Painting one frame immediately
+ * (rather than waiting for the first requestAnimationFrame) also means the
+ * title screen is up before iOS has finished settling its toolbar.
+ */
+function boot() {
+  try {
+    loadSave();
+    restart();
+    resizeCanvas();
+    render();                    // paint frame zero synchronously
+    requestAnimationFrame(loop);
+
+    // iOS reports the wrong viewport height for a moment after load, while the
+    // browser chrome animates. Re-measure a few times rather than trusting the
+    // first answer.
+    window.addEventListener("load", resizeCanvas);
+    setTimeout(resizeCanvas, 120);
+    setTimeout(resizeCanvas, 500);
+    setTimeout(resizeCanvas, 1200);
+  } catch (e) {
+    if (window.__gameFailed) {
+      window.__gameFailed((e && e.stack) || (e && e.message) || String(e));
+    }
+    throw e;
+  }
+}
+
+boot();
 </script>
 </body>
 </html>
