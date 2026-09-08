@@ -1,0 +1,78 @@
+{
+  "id": "endless-runner",
+  "name": "Turbo Dash",
+  "version": "1.0.0",
+  "description": "An endless runner platformer where a turquoise character auto-runs through a colorful world, leaping over gaps, dodging spikes, and collecting golden coins. How far can you go?",
+  "author": "CaisoGames AI Team",
+  "genre": "Endless Runner Platformer",
+  "tags": ["endless", "runner", "platformer", "procedural", "2D", "kids"],
+
+  "entryPoint": "src/index.html",
+  "buildCommand": null,
+
+  "controls": {
+    "keyboard": {
+      "space": "Jump (hold for a higher jump)",
+      "up": "Jump (hold for a higher jump)",
+      "w": "Jump (hold for a higher jump)"
+    },
+    "touch": {
+      "enabled": true,
+      "description": "Tap to jump, hold for a higher jump"
+    }
+  },
+
+  "features": [
+    "4-frame run cycle animation with a bouncy vertical bob",
+    "Variable jump height - hold the key to jump higher",
+    "Procedural platform generation with guaranteed-jumpable gaps",
+    "Four-layer parallax background (sky, clouds, hills, foreground grass)",
+    "Golden coins with a 4-frame 3D spin animation",
+    "Spike obstacles placed past a safe landing zone",
+    "Difficulty scaling: speed, gap size and obstacle rate grow with distance",
+    "Dust and sparkle particle effects",
+    "Distance-based scoring with a session best"
+  ],
+
+  "stats": {
+    "playtime": "1-5 minutes per run",
+    "difficulty": "Easy to Hard (progressive)",
+    "replayability": "High"
+  },
+
+  "mechanics": {
+    "primary": ["Auto-running character", "Jump physics with gravity"],
+    "secondary": ["Coin collection", "Spike avoidance", "Gap jumping"],
+    "unique": [
+      "Variable jump height, so the same button covers short hops and long leaps",
+      "Speed rises every 500 points up to a 10 px/frame cap"
+    ]
+  },
+
+  "difficulty": {
+    "type": "gradual_distance_based",
+    "tiers": [
+      { "name": "Easy Start",   "distance": "0-500m",    "description": "Wide platforms, small gaps, no spikes" },
+      { "name": "Getting Going","distance": "500-1500m", "description": "Narrower platforms, medium gaps, occasional spikes" },
+      { "name": "Full Speed",   "distance": "1500m+",    "description": "Bigger gaps, more floating platforms, frequent spikes" }
+    ]
+  },
+
+  "createdAt": "2026-09-08",
+  "updatedAt": "2026-09-08",
+  "status": "playable",
+
+  "technicalDetails": {
+    "engine": "Custom HTML5 Canvas",
+    "physics": "Custom (no libraries)",
+    "renderer": "2D Canvas",
+    "audioSupport": false,
+    "mobileSupport": true,
+    "offlineSupport": true
+  },
+
+  "credits": {
+    "design": "Claude (Design & Code)",
+    "code": "Claude (Code Team)"
+  }
+}

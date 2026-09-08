@@ -1,0 +1,1086 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Turbo Dash - Endless Runner</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: #1b2b3a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+    overflow: hidden;
+  }
+  #wrap {
+    position: relative;
+    width: 800px;
+    max-width: 100vw;
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    background: #87CEEB;
+    border-radius: 10px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+    image-rendering: pixelated;
+    touch-action: none;
+  }
+  #hint {
+    text-align: center;
+    color: #9fb6c9;
+    font-size: 13px;
+    margin-top: 10px;
+    letter-spacing: 0.5px;
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game" width="800" height="600"></canvas>
+  <div id="hint">SPACE / UP / W or TAP to jump &mdash; hold longer to jump higher</div>
+</div>
+
+<script>
+"use strict";
+
+/* ============================================================================
+   TURBO DASH - An endless runner platformer
+   ----------------------------------------------------------------------------
+   The whole game lives in this one file. It is organised in these sections:
+     1. Constants & configuration
+     2. Game state
+     3. Input handling
+     4. World generation (platforms, coins, spikes)
+     5. Update logic (physics, scrolling, collisions)
+     6. Drawing (background layers, world, player, UI)
+     7. The main loop
+   Read the big comment blocks - they explain the three trickiest systems:
+   the run cycle animation, the platform generator, and the parallax scroll.
+   ========================================================================== */
+
+
+/* ---------------------------------------------------------------------------
+   1. CONSTANTS & CONFIGURATION
+   ------------------------------------------------------------------------ */
+
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+const W = canvas.width;    // 800
+const H = canvas.height;   // 600
+
+// --- Physics ---
+const GRAVITY        = 0.8;   // pixels added to velocityY every frame
+const JUMP_STRENGTH  = -15;   // initial upward velocity (negative = up)
+const MAX_FALL_SPEED = 15;    // terminal velocity so falls stay controllable
+const HOLD_BOOST     = -0.55; // extra lift per frame while the key is held
+const HOLD_FRAMES    = 12;    // how many frames the hold boost can apply
+
+// --- World layout ---
+const PLAYER_X  = 150;   // the player never moves horizontally, the world does
+const PLAYER_W  = 40;
+const PLAYER_H  = 40;
+const GROUND_Y  = 450;   // Y of the TOP surface of a ground platform
+const GROUND_THICKNESS   = 25;
+const FLOATING_THICKNESS = 20;
+
+// --- Speed ---
+const START_SPEED = 5;   // pixels the world scrolls left each frame
+const MAX_SPEED   = 10;
+
+// --- Animation timing ---
+const RUN_FRAME_MS  = 100; // 10 fps run cycle -> 4 frames = 0.4s per stride
+const COIN_FRAME_MS = 80;  // 12.5 fps coin spin
+
+// --- Colours ---
+const C = {
+  player:      "#00CED1",
+  playerDark:  "#00A5A8",
+  playerBack:  "#00787A",
+  outline:     "#000000",
+  grass:       "#7EC850",
+  grassDark:   "#5FA83A",
+  dirt:        "#8B4513",
+  dirtDark:    "#6B3410",
+  stone:       "#808080",
+  stoneDark:   "#5F5F5F",
+  stoneLight:  "#A0A0A0",
+  coin:        "#FFD700",
+  coinShine:   "#FFA500",
+  spikeBase:   "#DC143C",
+  hills:       "#2E7D32",
+  hillsFar:    "#4CAF50",
+  skyTop:      "#87CEEB",
+  skyBottom:   "#FFFACD"
+};
+
+
+/* ---------------------------------------------------------------------------
+   2. GAME STATE
+   Everything that changes during play lives here so restart() can reset it
+   by simply rebuilding these objects.
+   ------------------------------------------------------------------------ */
+
+let player, platforms, coins, spikes, clouds, hills, grassTufts;
+let scrollSpeed, distance, coinCount, score;
+let gameOver, started;
+let runFrame, runTimer, coinFrame, coinTimer;
+let holdFrames, jumpHeld;
+let squashTimer;      // counts down after a landing for the squash effect
+let particles;        // little dust puffs kicked up while running
+let bestDistance = 0; // survives restarts within the page session
+let lastTime = 0;
+let elapsed = 0;      // total seconds, drives the run bob sine wave
+
+
+/* ---------------------------------------------------------------------------
+   3. INPUT HANDLING
+   Jump is "pressed" on keydown and "released" on keyup. Holding the key adds
+   a little extra lift for a limited number of frames (see updatePlayer).
+   ------------------------------------------------------------------------ */
+
+function pressJump() {
+  if (gameOver) { restart(); return; }
+  started = true;
+  jumpHeld = true;
+  // Only jump when standing on something - no mid-air jumps in Phase 1.
+  if (!player.isJumping) {
+    player.velocityY = JUMP_STRENGTH;
+    player.isJumping = true;
+    holdFrames = HOLD_FRAMES;
+    spawnDust(6, PLAYER_X + PLAYER_W / 2, player.y + PLAYER_H);
+  }
+}
+
+function releaseJump() {
+  jumpHeld = false;
+  holdFrames = 0; // cutting the key short cuts the jump short
+}
+
+window.addEventListener("keydown", e => {
+  if (e.code === "Space" || e.code === "ArrowUp" || e.code === "KeyW") {
+    e.preventDefault();
+    if (!e.repeat) pressJump();
+  }
+});
+
+window.addEventListener("keyup", e => {
+  if (e.code === "Space" || e.code === "ArrowUp" || e.code === "KeyW") {
+    e.preventDefault();
+    releaseJump();
+  }
+});
+
+canvas.addEventListener("pointerdown", e => { e.preventDefault(); pressJump(); });
+window.addEventListener("pointerup", () => releaseJump());
+
+
+/* ---------------------------------------------------------------------------
+   4. WORLD GENERATION
+   ----------------------------------------------------------------------------
+   HOW PLATFORM GENERATION WORKS
+   ----------------------------------------------------------------------------
+   The world is an array of platform rectangles. Each frame every platform
+   moves LEFT by scrollSpeed. Two housekeeping jobs keep the array healthy:
+
+     * Platforms whose right edge has passed x = 0 are deleted (they are gone
+       forever, off the left of the screen).
+     * Whenever the RIGHTMOST platform's right edge comes closer than
+       W + 200 pixels, we append a new platform just beyond it.
+
+   That second rule is what makes the level "endless": we only ever generate
+   a little past the right edge of the screen, so memory stays tiny but the
+   player never runs out of ground.
+
+   KEEPING GAPS JUMPABLE
+   ---------------------
+   A gap is only fair if the player can physically clear it. With
+   JUMP_STRENGTH = -15 and GRAVITY = 0.8 the airtime is roughly
+       2 * 15 / 0.8 = 37 frames
+   and at the top speed of 10 px/frame that covers ~370 pixels. We cap gaps
+   at 220 pixels, comfortably inside that budget, and we also cap how much
+   HIGHER the next platform may be (MAX_STEP_UP) because rising costs airtime.
+   ------------------------------------------------------------------------ */
+
+const MAX_STEP_UP = 90;   // next platform may be at most this much higher
+const MIN_PLAT_Y  = 280;  // highest a floating platform may sit
+const MAX_PLAT_Y  = GROUND_Y;
+
+function rand(min, max)     { return Math.random() * (max - min) + min; }
+function randInt(min, max)  { return Math.floor(rand(min, max + 1)); }
+
+// Difficulty knobs, all driven by the current score.
+function gapRange() {
+  const min = Math.min(80  + Math.floor(score / 1000) * 10, 160);
+  const max = Math.min(150 + Math.floor(score / 500)  * 15, 220);
+  return [min, Math.max(min + 20, max)];
+}
+
+function spikeChance() {
+  if (score < 500)  return 0;
+  if (score < 1500) return 0.12;
+  return 0.22;
+}
+
+function targetSpeed() {
+  return Math.min(START_SPEED + Math.floor(score / 500) * 0.5, MAX_SPEED);
+}
+
+/**
+ * Append one platform to the right of the last one, then decorate it with
+ * coins and (maybe) a spike.
+ */
+function generatePlatform() {
+  const last = platforms[platforms.length - 1];
+  const [gapMin, gapMax] = gapRange();
+  const gap = rand(gapMin, gapMax);
+
+  // Decide whether this is ground level or a floating stone slab.
+  // Early on we lean heavily on ground platforms so it stays gentle.
+  const floatChance = score < 300 ? 0.1 : 0.35;
+  const isFloating = Math.random() < floatChance;
+
+  let y, width, type, wantsSpike = false;
+  if (isFloating) {
+    type  = "floating";
+    width = rand(100, 150);
+    // Stay within one jump of the platform we are leaving.
+    const highest = Math.max(MIN_PLAT_Y, last.y - MAX_STEP_UP);
+    y = rand(highest, MAX_PLAT_Y - 20);
+  } else {
+    type  = "ground";
+    y     = GROUND_Y;
+    // Decide up front whether this platform carries a spike. If it does we
+    // make it extra wide, so the spike still fits comfortably PAST the
+    // landing zone (see decoratePlatform) instead of ambushing the player.
+    wantsSpike = Math.random() < spikeChance();
+    width = wantsSpike ? rand(340, 430) : rand(150, 400);
+  }
+
+  const plat = {
+    x: last.x + last.width + gap,
+    y: y,
+    width: width,
+    type: type,
+    // Grass tufts are randomised once at creation so they don't shimmer.
+    tufts: type === "ground"
+      ? Array.from({ length: randInt(5, 7) }, () => Math.random())
+      : null
+  };
+  platforms.push(plat);
+
+  decoratePlatform(plat, wantsSpike);
+}
+
+// A jump can carry the player a fair way onto the next platform, so the first
+// stretch of every platform is a "landing zone" that must stay clear. Putting a
+// spike inside it would kill a player who had no chance to react.
+const LANDING_ZONE = 200;
+
+/** Scatter coins and obstacles onto a freshly created platform. */
+function decoratePlatform(plat, wantsSpike) {
+  // --- Spikes sit past the landing zone and never within 70px of the far
+  //     edge, so there is always somewhere safe to land and room to react. ---
+  let spikeX = null;
+  if (wantsSpike && plat.width > LANDING_ZONE + 120) {
+    spikeX = plat.x + rand(LANDING_ZONE, plat.width - 70);
+    spikes.push({ x: spikeX, y: plat.y - 30, size: 30 });
+  }
+
+  // --- Coins: 30% chance, arranged in a straight line or a gentle arc. ---
+  if (Math.random() < 0.30) {
+    const count = randInt(3, 5);
+    const spacing = 34;
+    const startX = plat.x + (plat.width - (count - 1) * spacing) / 2;
+    const arc = Math.random() < 0.5;
+    for (let i = 0; i < count; i++) {
+      const x = startX + i * spacing;
+      // Never dangle a coin on top of a spike - that baits the player into it.
+      if (spikeX !== null && Math.abs(x - (spikeX + 15)) < 46) continue;
+      // An arc lifts the middle coins so the player must jump through them.
+      const lift = arc ? Math.sin((i / (count - 1)) * Math.PI) * 45 : 0;
+      coins.push({ x: x, y: plat.y - 42 - lift, collected: false });
+    }
+  }
+}
+
+/** Build the starting world: a long safe runway plus a few platforms ahead. */
+function seedWorld() {
+  platforms = [];
+  coins = [];
+  spikes = [];
+
+  // A generous opening runway so the player can get their bearings.
+  platforms.push({
+    x: 0,
+    y: GROUND_Y,
+    width: 700,
+    type: "ground",
+    tufts: Array.from({ length: 7 }, () => Math.random())
+  });
+
+  // Pre-generate enough platforms to fill the screen and a bit beyond.
+  while (platforms[platforms.length - 1].x + platforms[platforms.length - 1].width < W + 400) {
+    generatePlatform();
+  }
+}
+
+/* --- Background element setup ------------------------------------------- */
+
+function seedBackground() {
+  clouds = [];
+  for (let i = 0; i < 5; i++) {
+    clouds.push({ x: rand(0, W), y: rand(40, 200), scale: rand(0.7, 1.3) });
+  }
+
+  // Hills are wide overlapping bumps; two layers for depth.
+  hills = [];
+  for (let i = 0; i < 6; i++) {
+    hills.push({
+      x: i * 220 + rand(-40, 40),
+      radius: rand(120, 200),
+      height: rand(90, 160),
+      far: i % 2 === 0
+    });
+  }
+
+  // Foreground grass/flowers along the very bottom of the screen.
+  grassTufts = [];
+  for (let i = 0; i < 24; i++) {
+    grassTufts.push({
+      x: rand(0, W),
+      h: rand(10, 22),
+      flower: Math.random() < 0.35,
+      hue: Math.random() < 0.5 ? "#FFE066" : "#FF8FB1"
+    });
+  }
+}
+
+
+/* ---------------------------------------------------------------------------
+   5. UPDATE LOGIC
+   ------------------------------------------------------------------------ */
+
+/**
+ * THE RUN CYCLE
+ * -------------
+ * A run cycle is just four poses shown in a loop. We keep a millisecond timer
+ * (runTimer); every time it passes RUN_FRAME_MS we advance runFrame by one and
+ * wrap it back to 0 after frame 3. Because the timer is driven by real elapsed
+ * time rather than by frame count, the animation runs at the same speed even
+ * if the display refresh rate changes.
+ *
+ * The four poses are drawn in drawPlayer(); see the comment there.
+ */
+function updateRunAnimation(dt) {
+  runTimer += dt;
+  while (runTimer >= RUN_FRAME_MS) {
+    runTimer -= RUN_FRAME_MS;
+    runFrame = (runFrame + 1) % 4;
+  }
+
+  coinTimer += dt;
+  while (coinTimer >= COIN_FRAME_MS) {
+    coinTimer -= COIN_FRAME_MS;
+    coinFrame = (coinFrame + 1) % 4;
+  }
+}
+
+/**
+ * VARIABLE JUMP HEIGHT
+ * --------------------
+ * Tapping jump gives the base JUMP_STRENGTH. While the key stays held AND the
+ * player is still moving upward AND we have holdFrames left, we add a small
+ * extra upward nudge each frame. Releasing early zeroes holdFrames, which cuts
+ * the jump short. That is the whole trick behind "hold to jump higher".
+ */
+function updatePlayer() {
+  if (jumpHeld && holdFrames > 0 && player.velocityY < 0) {
+    player.velocityY += HOLD_BOOST;
+    holdFrames--;
+  }
+
+  player.velocityY += GRAVITY;
+  if (player.velocityY > MAX_FALL_SPEED) player.velocityY = MAX_FALL_SPEED;
+
+  player.y += player.velocityY;
+
+  if (squashTimer > 0) squashTimer--;
+}
+
+/**
+ * PARALLAX SCROLLING
+ * ------------------
+ * Nothing in this game moves right - the player is pinned at PLAYER_X and the
+ * world slides left underneath them. Different layers slide at different
+ * fractions of scrollSpeed, which is what sells the illusion of depth:
+ *
+ *     clouds      0.2x   (very far away, barely moves)
+ *     hills       0.4x   (middle distance)
+ *     platforms   1.0x   (the layer the player actually stands on)
+ *     foreground  1.2x   (closest to camera, whips past)
+ *
+ * Background elements wrap around instead of being deleted: when a cloud
+ * slides off the left it is teleported back to the right at a new height.
+ */
+function scrollWorld() {
+  const s = scrollSpeed;
+
+  for (const p of platforms) p.x -= s;
+  for (const c of coins)     c.x -= s;
+  for (const sp of spikes)   sp.x -= s;
+
+  for (const cl of clouds) {
+    cl.x -= s * 0.2;
+    if (cl.x < -120) { cl.x = W + rand(20, 160); cl.y = rand(40, 200); }
+  }
+
+  for (const h of hills) {
+    h.x -= s * 0.4;
+    if (h.x + h.radius < 0) h.x = W + h.radius + rand(0, 120);
+  }
+
+  for (const g of grassTufts) {
+    g.x -= s * 1.2;
+    if (g.x < -10) g.x = W + rand(0, 40);
+  }
+
+  for (const p of particles) {
+    p.x -= s;
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += 0.15;
+    p.life--;
+  }
+}
+
+/** Delete anything that has scrolled off the left, and top up the right. */
+function recycleWorld() {
+  platforms = platforms.filter(p => p.x + p.width > -50);
+  coins     = coins.filter(c => c.x > -40 && !c.collected);
+  spikes    = spikes.filter(s => s.x + s.size > -40);
+  particles = particles.filter(p => p.life > 0);
+
+  // Keep generating until we have ground well past the right edge.
+  let last = platforms[platforms.length - 1];
+  while (last.x + last.width < W + 200) {
+    generatePlatform();
+    last = platforms[platforms.length - 1];
+  }
+}
+
+/**
+ * COLLISIONS
+ * ----------
+ * Landing uses a "one-way platform" rule: the player only lands if they were
+ * ABOVE the platform's surface on the previous frame and are falling. That
+ * lets them jump up through a floating slab from underneath, which feels much
+ * better than being blocked by an invisible ceiling.
+ */
+function checkCollisions() {
+  const px = PLAYER_X;
+  const py = player.y;
+  const prevBottom = py - player.velocityY + PLAYER_H;
+
+  let landed = false;
+
+  for (const p of platforms) {
+    const thickness = p.type === "ground" ? GROUND_THICKNESS : FLOATING_THICKNESS;
+    const horizontallyOver = px + PLAYER_W > p.x && px < p.x + p.width;
+    if (!horizontallyOver) continue;
+
+    const bottom = py + PLAYER_H;
+    const fallingOntoTop =
+      player.velocityY >= 0 &&
+      prevBottom <= p.y + 1 &&
+      bottom >= p.y &&
+      bottom <= p.y + thickness + player.velocityY;
+
+    if (fallingOntoTop) {
+      player.y = p.y - PLAYER_H;
+      player.velocityY = 0;
+      if (player.isJumping) {
+        squashTimer = 6;              // squash-on-landing effect
+        spawnDust(8, px + PLAYER_W / 2, p.y);
+      }
+      player.isJumping = false;
+      landed = true;
+      break;
+    }
+  }
+
+  // Not standing on anything? Then we are airborne (walked off an edge).
+  if (!landed) player.isJumping = true;
+
+  // --- Coins ---
+  const cx = px + PLAYER_W / 2;
+  const cy = py + PLAYER_H / 2;
+  for (const c of coins) {
+    if (c.collected) continue;
+    const dx = cx - c.x;
+    const dy = cy - c.y;
+    if (dx * dx + dy * dy < 32 * 32) {   // circle-vs-circle, generous radius
+      c.collected = true;
+      coinCount++;
+      spawnSparkle(c.x, c.y);
+    }
+  }
+
+  // --- Spikes: any overlap is instant death. Inset the boxes slightly so
+  //     near-misses feel fair rather than punishing. ---
+  for (const s of spikes) {
+    if (px + PLAYER_W - 6 > s.x + 4 &&
+        px + 6 < s.x + s.size - 4 &&
+        py + PLAYER_H - 4 > s.y + 8 &&
+        py + 4 < s.y + s.size) {
+      die();
+      return;
+    }
+  }
+
+  // --- Fell into a gap ---
+  if (player.y > H + 50) die();
+}
+
+function die() {
+  if (gameOver) return;
+  gameOver = true;
+  player.isAlive = false;
+  const meters = Math.floor(distance / 10);
+  if (meters > bestDistance) bestDistance = meters;
+}
+
+/* --- Particles ----------------------------------------------------------- */
+
+function spawnDust(n, x, y) {
+  for (let i = 0; i < n; i++) {
+    particles.push({
+      x: x + rand(-8, 8), y: y + rand(-4, 2),
+      vx: rand(-1.4, 0.4), vy: rand(-2.2, -0.4),
+      life: randInt(14, 26), size: rand(2, 5),
+      color: "rgba(255,255,255,0.75)"
+    });
+  }
+}
+
+function spawnSparkle(x, y) {
+  for (let i = 0; i < 10; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = rand(1, 3.5);
+    particles.push({
+      x, y,
+      vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 1,
+      life: randInt(16, 30), size: rand(2, 4),
+      color: Math.random() < 0.5 ? "#FFD700" : "#FFFFFF"
+    });
+  }
+}
+
+
+/* ---------------------------------------------------------------------------
+   6. DRAWING
+   Drawn back to front: sky -> clouds -> hills -> platforms & objects ->
+   player -> foreground grass -> particles -> UI.
+   ------------------------------------------------------------------------ */
+
+function drawBackground() {
+  // Layer 1: sky gradient
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, C.skyTop);
+  g.addColorStop(1, C.skyBottom);
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+
+  // A soft sun glow in the upper right
+  const sun = ctx.createRadialGradient(660, 90, 10, 660, 90, 110);
+  sun.addColorStop(0, "rgba(255,255,200,0.95)");
+  sun.addColorStop(1, "rgba(255,255,200,0)");
+  ctx.fillStyle = sun;
+  ctx.fillRect(540, -20, 240, 240);
+
+  // Layer 2: clouds - each cloud is three overlapping circles.
+  ctx.fillStyle = "rgba(255,255,255,0.92)";
+  for (const cl of clouds) {
+    const s = cl.scale;
+    ctx.beginPath();
+    ctx.arc(cl.x,          cl.y,          22 * s, 0, Math.PI * 2);
+    ctx.arc(cl.x + 26 * s, cl.y - 10 * s, 28 * s, 0, Math.PI * 2);
+    ctx.arc(cl.x + 54 * s, cl.y,          20 * s, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Layer 3: rolling hills, far layer first so near hills overlap them.
+  for (const far of [true, false]) {
+    ctx.fillStyle = far ? C.hillsFar : C.hills;
+    for (const h of hills) {
+      if (h.far !== far) continue;
+      const baseY = GROUND_Y + 40;
+      ctx.beginPath();
+      ctx.moveTo(h.x - h.radius, baseY);
+      ctx.quadraticCurveTo(h.x, baseY - h.height * 2, h.x + h.radius, baseY);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+}
+
+function drawPlatforms() {
+  for (const p of platforms) {
+    if (p.x > W || p.x + p.width < 0) continue;   // cull off-screen platforms
+
+    if (p.type === "ground") {
+      // Dirt body extends all the way to the bottom of the screen.
+      ctx.fillStyle = C.dirt;
+      ctx.fillRect(p.x, p.y + 8, p.width, H - p.y);
+      ctx.fillStyle = C.dirtDark;
+      for (let i = 0; i < p.width; i += 40) {
+        ctx.fillRect(p.x + i + 12, p.y + 34, 10, 6);
+        ctx.fillRect(p.x + i + 26, p.y + 58, 8, 5);
+      }
+
+      // Grass cap
+      ctx.fillStyle = C.grass;
+      ctx.fillRect(p.x, p.y, p.width, 14);
+      ctx.fillStyle = C.grassDark;
+      ctx.fillRect(p.x, p.y + 12, p.width, 4);
+
+      // Grass tufts: small triangles poking up from the surface.
+      ctx.fillStyle = C.grass;
+      for (const t of p.tufts) {
+        const tx = p.x + t * (p.width - 12) + 6;
+        ctx.beginPath();
+        ctx.moveTo(tx - 4, p.y);
+        ctx.lineTo(tx,     p.y - 9);
+        ctx.lineTo(tx + 4, p.y);
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      ctx.strokeStyle = "rgba(0,0,0,0.35)";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(p.x, p.y, p.width, H - p.y);
+    } else {
+      // Floating stone slab
+      ctx.fillStyle = C.stone;
+      ctx.fillRect(p.x, p.y, p.width, FLOATING_THICKNESS);
+      ctx.fillStyle = C.stoneLight;
+      ctx.fillRect(p.x, p.y, p.width, 5);
+      ctx.fillStyle = C.stoneDark;
+      ctx.fillRect(p.x, p.y + FLOATING_THICKNESS - 5, p.width, 5);
+
+      // Brick seams
+      ctx.strokeStyle = C.stoneDark;
+      ctx.lineWidth = 2;
+      const seams = 4;
+      for (let i = 1; i < seams; i++) {
+        const sx = p.x + (p.width / seams) * i;
+        ctx.beginPath();
+        ctx.moveTo(sx, p.y + 3);
+        ctx.lineTo(sx, p.y + FLOATING_THICKNESS - 3);
+        ctx.stroke();
+      }
+
+      ctx.strokeStyle = "#000";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(p.x, p.y, p.width, FLOATING_THICKNESS);
+    }
+  }
+}
+
+/**
+ * COIN SPIN
+ * ---------
+ * A real 3D spinning coin is just a circle whose WIDTH shrinks to nothing and
+ * grows back. We fake that with four widths - 24, 18, 6, 18 - and draw an
+ * ellipse at the current width. Cycling through them reads as a spin.
+ */
+const COIN_WIDTHS = [24, 18, 6, 18];
+
+function drawCoins() {
+  for (const c of coins) {
+    if (c.collected || c.x < -30 || c.x > W + 30) continue;
+
+    const w = COIN_WIDTHS[coinFrame] / 2;
+    const h = 12;
+
+    ctx.save();
+    ctx.translate(c.x, c.y);
+
+    // Outer gold body
+    ctx.fillStyle = C.coin;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, w, h, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#B8860B";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Inner ring (the donut hole) - skip it on the thin frame
+    if (w > 5) {
+      ctx.fillStyle = C.coinShine;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, w * 0.5, h * 0.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // White sparkle in the top-right
+    if (w > 6) {
+      ctx.fillStyle = "rgba(255,255,255,0.9)";
+      ctx.beginPath();
+      ctx.ellipse(w * 0.35, -h * 0.45, w * 0.18, h * 0.16, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.restore();
+  }
+}
+
+function drawSpikes() {
+  for (const s of spikes) {
+    if (s.x > W + 40 || s.x + s.size < -40) continue;
+
+    // Red danger base
+    ctx.fillStyle = C.spikeBase;
+    ctx.fillRect(s.x, s.y + s.size - 7, s.size, 7);
+    ctx.strokeStyle = "#000";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(s.x, s.y + s.size - 7, s.size, 7);
+
+    // Three black triangular spikes pointing up
+    ctx.fillStyle = "#1a1a1a";
+    const n = 3;
+    const tw = s.size / n;
+    for (let i = 0; i < n; i++) {
+      const bx = s.x + i * tw;
+      ctx.beginPath();
+      ctx.moveTo(bx + 1,        s.y + s.size - 6);
+      ctx.lineTo(bx + tw / 2,   s.y + 2);
+      ctx.lineTo(bx + tw - 1,   s.y + s.size - 6);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+}
+
+/**
+ * THE PLAYER AND THE FOUR-FRAME RUN CYCLE
+ * ---------------------------------------
+ * The character is built from simple rectangles: a body square, two arms and
+ * two legs. Animating it means moving the arm and leg rectangles between four
+ * poses:
+ *
+ *   Frame 0 (contact/stance) - legs together, straight down, no body tilt.
+ *   Frame 1 (left forward)   - left leg swings 8px forward and lifts 5px,
+ *                              right leg trails 8px back and lifts 2px.
+ *                              The body tilts ~3 degrees into the run.
+ *   Frame 2 (passing)        - legs nearly vertical again, slightly apart.
+ *   Frame 3 (right forward)  - mirror image of frame 1.
+ *
+ * Arms swing OPPOSITE to the legs (left arm forward when right leg is
+ * forward), which is what makes a run read as natural.
+ *
+ * On top of the pose we add a vertical bob: sin(elapsed * 10) * 2. That is a
+ * 2 pixel up-and-down wobble which gives the run a bouncy, springy feel. When
+ * the player is airborne the bob and the cycle both stop and we swap in a
+ * dedicated jump or fall pose instead.
+ */
+function drawPlayer() {
+  const airborne = player.isJumping;
+
+  // Per-frame pose data: [leftLegDX, leftLegDY, rightLegDX, rightLegDY, tilt]
+  // The swing is +/-6 rather than a wider stride because the legs sit only
+  // ~19px apart: swinging them further makes them overlap into one blob.
+  const POSES = [
+    [ 0,  0,   0,  0,   0 ],   // 0: stance
+    [ 6, -5,  -6, -2,   3 ],   // 1: left forward
+    [ 2,  0,  -2,  0,   0 ],   // 2: passing
+    [-6, -2,   6, -5,  -3 ]    // 3: right forward
+  ];
+
+  let [llx, lly, rlx, rly, tiltDeg] = POSES[runFrame];
+  let bob = Math.sin(elapsed * 10) * 2;
+
+  if (airborne) {
+    bob = 0;
+    if (player.velocityY < 0) {
+      // Rising: legs tucked up, arms raised.
+      llx = 4; lly = -8; rlx = -4; rly = -8; tiltDeg = -4;
+    } else {
+      // Falling: legs reach down, arms spread.
+      llx = -3; lly = 3; rlx = 3; rly = 3; tiltDeg = 4;
+    }
+  }
+
+  // Landing squash: briefly flatten the character for a satisfying impact.
+  const squash = squashTimer > 0 ? (squashTimer / 6) * 5 : 0;
+
+  const w = PLAYER_W + squash;
+  const h = PLAYER_H - squash;
+  const x = PLAYER_X - squash / 2;
+  const y = player.y + bob + squash;
+
+  ctx.save();
+  // Rotate about the character's centre so the tilt looks like a lean.
+  ctx.translate(x + w / 2, y + h / 2);
+  ctx.rotate((tiltDeg * Math.PI) / 180);
+  ctx.translate(-w / 2, -h / 2);
+
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = C.outline;
+  ctx.lineJoin = "round";
+
+  // The 40x40 box is split so every limb stays inside the collision box:
+  //   y 0  .. 26  body (with the face)
+  //   y 24 .. 40  legs
+  // Arms hang off the body's left and right edges so they read clearly.
+  const bodyX = w * 0.13, bodyW = w * 0.74, bodyH = h * 0.66;
+  const legW = w * 0.18, legH = h * 0.42, legTop = bodyH - 3;
+  const armW = w * 0.19, armH = h * 0.40, armTop = h * 0.16;
+
+  // A limb swinging backwards is the far-side limb, so it is painted darker.
+  // Without that, the near and far legs merge into one shape at full stride.
+  const limb = (bx, by, bw, bh, back) => {
+    ctx.fillStyle = back ? C.playerBack : C.playerDark;
+    ctx.fillRect(bx, by, bw, bh);
+    ctx.strokeRect(bx, by, bw, bh);
+  };
+
+  // --- Arms swing OPPOSITE the legs, which is what sells a run. ---
+  limb(bodyX - armW * 0.75 - rlx * 0.4, armTop + rly * 0.5, armW, armH, rlx > 0);
+  limb(bodyX + bodyW - armW * 0.25 - llx * 0.4, armTop + lly * 0.5, armW, armH, llx > 0);
+
+  // --- Legs ---
+  // Both legs swing around the SAME centre point rather than from two fixed
+  // hip positions. That is what makes frames 1 and 3 true mirrors of each
+  // other: whichever leg is forward, the stride looks identical.
+  // Back leg is drawn first so the near leg overlaps it.
+  const legCentre = bodyX + bodyW / 2 - legW / 2;
+  const legs = [
+    { x: legCentre + llx * 1.6, y: legTop + lly, back: llx < 0 },
+    { x: legCentre + rlx * 1.6, y: legTop + rly, back: rlx < 0 }
+  ].sort((a, b) => (b.back ? 1 : 0) - (a.back ? 1 : 0));
+  for (const l of legs) limb(l.x, l.y, legW, legH, l.back);
+
+  // --- Body ---
+  ctx.fillStyle = C.player;
+  ctx.fillRect(bodyX, 0, bodyW, bodyH);
+  ctx.strokeRect(bodyX, 0, bodyW, bodyH);
+
+  // Slight highlight on the upper-left of the body for a bit of shape.
+  ctx.fillStyle = "rgba(255,255,255,0.28)";
+  ctx.fillRect(bodyX + 3, 3, bodyW * 0.38, bodyH * 0.28);
+
+  // --- Face: two dot eyes and a smile ---
+  const fx = bodyX + bodyW / 2;
+  ctx.fillStyle = "#000";
+  ctx.beginPath();
+  ctx.arc(fx - bodyW * 0.20, bodyH * 0.38, 3.2, 0, Math.PI * 2);
+  ctx.arc(fx + bodyW * 0.20, bodyH * 0.38, 3.2, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = "#000";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(fx, bodyH * 0.58, bodyW * 0.24, 0.15 * Math.PI, 0.85 * Math.PI);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function drawForeground() {
+  // Layer 4: fast-moving grass and flowers hugging the bottom edge.
+  for (const g of grassTufts) {
+    const baseY = H - 2;
+    ctx.strokeStyle = "#5FA83A";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(g.x, baseY);
+    ctx.quadraticCurveTo(g.x + 4, baseY - g.h * 0.6, g.x + 2, baseY - g.h);
+    ctx.stroke();
+
+    if (g.flower) {
+      ctx.fillStyle = g.hue;
+      ctx.beginPath();
+      ctx.arc(g.x + 2, baseY - g.h - 2, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    ctx.globalAlpha = Math.max(0, p.life / 26);
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x, p.y, p.size, p.size);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function outlinedText(text, x, y, font, fill, align) {
+  ctx.font = font;
+  ctx.textAlign = align || "left";
+  ctx.lineWidth = 5;
+  ctx.strokeStyle = "rgba(0,0,0,0.85)";
+  ctx.strokeText(text, x, y);
+  ctx.fillStyle = fill;
+  ctx.fillText(text, x, y);
+}
+
+function drawUI() {
+  const meters = Math.floor(distance / 10);
+
+  outlinedText("Distance: " + meters + "m", 18, 40, "bold 24px 'Trebuchet MS', sans-serif", "#FFFFFF");
+
+  // Small coin icon next to the counter
+  ctx.save();
+  ctx.translate(28, 62);
+  ctx.fillStyle = C.coin;
+  ctx.beginPath(); ctx.arc(0, 0, 9, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "#B8860B"; ctx.lineWidth = 2; ctx.stroke();
+  ctx.fillStyle = C.coinShine;
+  ctx.beginPath(); ctx.arc(0, 0, 4, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+
+  outlinedText("Coins: " + coinCount, 44, 70, "bold 20px 'Trebuchet MS', sans-serif", C.coin);
+
+  if (bestDistance > 0) {
+    outlinedText("Best: " + bestDistance + "m", W - 18, 40,
+                 "bold 20px 'Trebuchet MS', sans-serif", "#FFFFFF", "right");
+  }
+
+  // Start prompt before the first jump
+  if (!started && !gameOver) {
+    ctx.fillStyle = "rgba(0,0,0,0.35)";
+    ctx.fillRect(0, 230, W, 120);
+    outlinedText("TURBO DASH", W / 2, 290, "bold 46px 'Trebuchet MS', sans-serif", "#FFE066", "center");
+    outlinedText("Press SPACE to start running!", W / 2, 330,
+                 "bold 22px 'Trebuchet MS', sans-serif", "#FFFFFF", "center");
+  }
+
+  if (gameOver) drawGameOver(meters);
+}
+
+function drawGameOver(meters) {
+  ctx.fillStyle = "rgba(0,0,0,0.7)";
+  ctx.fillRect(0, 0, W, H);
+
+  outlinedText("GAME OVER", W / 2, 210, "bold 48px 'Trebuchet MS', sans-serif", "#FF4136", "center");
+  outlinedText("Distance: " + meters + "m", W / 2, 280, "bold 30px 'Trebuchet MS', sans-serif", "#FFFFFF", "center");
+  outlinedText("Coins: " + coinCount,       W / 2, 325, "bold 30px 'Trebuchet MS', sans-serif", C.coin, "center");
+
+  if (meters >= bestDistance && meters > 0) {
+    outlinedText("NEW BEST!", W / 2, 372, "bold 26px 'Trebuchet MS', sans-serif", "#7EC850", "center");
+  } else {
+    outlinedText("Best: " + bestDistance + "m", W / 2, 372, "bold 22px 'Trebuchet MS', sans-serif", "#CCCCCC", "center");
+  }
+
+  // Gently pulse the restart prompt so it's obviously interactive.
+  const pulse = 0.75 + Math.sin(elapsed * 5) * 0.25;
+  ctx.globalAlpha = pulse;
+  outlinedText("PRESS SPACE TO RESTART", W / 2, 440, "bold 26px 'Trebuchet MS', sans-serif", "#FFFFFF", "center");
+  ctx.globalAlpha = 1;
+}
+
+
+/* ---------------------------------------------------------------------------
+   7. THE MAIN LOOP
+   ----------------------------------------------------------------------------
+   Order of operations each frame:
+     1. advance animation timers
+     2. apply gravity / update player position
+     3. scroll the world left
+     4. recycle: drop off-screen objects, generate new ones on the right
+     5. check collisions
+     6. update score and difficulty
+     7. draw everything back to front
+   ------------------------------------------------------------------------ */
+
+function update(dt) {
+  updateRunAnimation(dt);
+
+  if (!started || gameOver) {
+    // Idle attract mode: the character still bobs and the clouds still drift.
+    for (const cl of clouds) {
+      cl.x -= 0.2;
+      if (cl.x < -120) { cl.x = W + rand(20, 160); cl.y = rand(40, 200); }
+    }
+    particles = particles.filter(p => p.life > 0);
+    for (const p of particles) { p.x += p.vx; p.y += p.vy; p.vy += 0.15; p.life--; }
+    return;
+  }
+
+  updatePlayer();
+  scrollWorld();
+  recycleWorld();
+  checkCollisions();
+
+  if (!gameOver) {
+    distance += scrollSpeed;
+    score = Math.floor(distance / 10) + coinCount * 10;
+    scrollSpeed = targetSpeed();
+  }
+}
+
+function render() {
+  drawBackground();
+  drawPlatforms();
+  drawCoins();
+  drawSpikes();
+  drawPlayer();
+  drawForeground();
+  drawParticles();
+  drawUI();
+}
+
+function loop(timestamp) {
+  // dt is capped so that tabbing away and back doesn't teleport the player.
+  const dt = Math.min(timestamp - lastTime || 16, 50);
+  lastTime = timestamp;
+  elapsed += dt / 1000;
+
+  update(dt);
+  render();
+
+  requestAnimationFrame(loop);
+}
+
+
+/* ---------------------------------------------------------------------------
+   INIT / RESTART
+   ------------------------------------------------------------------------ */
+
+function restart() {
+  player = {
+    y: GROUND_Y - PLAYER_H,
+    velocityY: 0,
+    isJumping: false,
+    isAlive: true
+  };
+
+  scrollSpeed = START_SPEED;
+  distance = 0;
+  coinCount = 0;
+  score = 0;
+  gameOver = false;
+  started = false;
+
+  runFrame = 0;  runTimer = 0;
+  coinFrame = 0; coinTimer = 0;
+  holdFrames = 0; jumpHeld = false;
+  squashTimer = 0;
+  particles = [];
+
+  seedWorld();
+  seedBackground();
+}
+
+restart();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
