@@ -2,41 +2,65 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- viewport-fit=cover + user-scalable=no: fills the notch area on iPhone and
+     stops double-tap zoom and pinch-zoom from fighting the touch controls. -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#1b2b3a">
 <title>Turbo Dash - Endless Runner</title>
 <style>
   html, body {
     margin: 0;
     padding: 0;
+    width: 100%;
     height: 100%;
     background: #1b2b3a;
-    display: flex;
-    align-items: center;
-    justify-content: center;
     font-family: "Trebuchet MS", "Segoe UI", sans-serif;
     overflow: hidden;
+    /* Kill every iOS gesture that would otherwise interrupt play: rubber-band
+       scrolling, the tap highlight flash, text selection and the long-press
+       callout menu. */
+    overscroll-behavior: none;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+    touch-action: none;
+    position: fixed;
+    inset: 0;
   }
   #wrap {
-    position: relative;
-    width: 800px;
-    max-width: 100vw;
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    /* Respect the notch / home indicator so nothing important is clipped. */
+    padding: env(safe-area-inset-top) env(safe-area-inset-right)
+             env(safe-area-inset-bottom) env(safe-area-inset-left);
+    box-sizing: border-box;
   }
   canvas {
     display: block;
-    width: 100%;
     background: #87CEEB;
-    border-radius: 10px;
     box-shadow: 0 10px 40px rgba(0,0,0,0.5);
-    image-rendering: pixelated;
     touch-action: none;
+    /* JS sizes this to the largest 4:3 box that fits, so the game keeps its
+       aspect ratio on every phone instead of stretching. */
   }
   #hint {
     text-align: center;
     color: #9fb6c9;
     font-size: 13px;
-    margin-top: 10px;
+    margin-top: 8px;
     letter-spacing: 0.5px;
+    padding: 0 10px;
   }
+  /* On short/landscape phone screens the hint just steals room from the game. */
+  @media (max-height: 480px) { #hint { display: none; } }
 </style>
 </head>
 <body>
@@ -75,11 +99,27 @@ const W = canvas.width;    // 800
 const H = canvas.height;   // 600
 
 // --- Physics ---
-const GRAVITY        = 0.8;   // pixels added to velocityY every frame
+// Gravity is asymmetric: lighter on the way up, heavier on the way down. That
+// is a standard platformer trick - it keeps the hang time that makes a jump
+// feel powerful while making the descent snappy enough to feel controllable.
+const GRAVITY        = 0.8;   // upward-phase gravity
+const GRAVITY_FALL   = 1.05;  // downward-phase gravity (snappier landings)
 const JUMP_STRENGTH  = -15;   // initial upward velocity (negative = up)
-const MAX_FALL_SPEED = 15;    // terminal velocity so falls stay controllable
+const MAX_FALL_SPEED = 16;    // terminal velocity so falls stay controllable
 const HOLD_BOOST     = -0.55; // extra lift per frame while the key is held
 const HOLD_FRAMES    = 12;    // how many frames the hold boost can apply
+
+// --- Forgiveness windows (see tryJump) -------------------------------------
+// These two numbers do more for how the game FEELS than anything else in the
+// file. They turn "the game stole that from me" deaths into "I messed up".
+const COYOTE_FRAMES = 7;   // still jumpable this long after walking off a ledge
+const BUFFER_FRAMES = 9;   // a jump pressed this early still fires on landing
+
+// --- Scoring / combo -------------------------------------------------------
+const COMBO_WINDOW  = 150; // frames a coin streak survives without a new coin
+const MAX_MULT      = 8;   // multiplier ceiling
+const NEAR_MISS_PX  = 30;  // clearing a spike by less than this is a "close call"
+const BIG_AIR_FRAMES = 34; // airborne longer than this earns an air bonus
 
 // --- World layout ---
 const PLAYER_X  = 150;   // the player never moves horizontally, the world does
@@ -133,9 +173,19 @@ let runFrame, runTimer, coinFrame, coinTimer;
 let holdFrames, jumpHeld;
 let squashTimer;      // counts down after a landing for the squash effect
 let particles;        // little dust puffs kicked up while running
+let popups;           // floating "+120" / "CLOSE CALL!" score texts
 let bestDistance = 0; // survives restarts within the page session
 let lastTime = 0;
 let elapsed = 0;      // total seconds, drives the run bob sine wave
+
+// Forgiveness / input state
+let coyoteFrames;     // >0 means a jump is still allowed after leaving ground
+let jumpBuffer;       // >0 means a jump was pressed and is waiting to fire
+
+// Combo & skill scoring
+let combo;            // coins collected in the current streak
+let comboTimer;       // frames left before the streak lapses
+let airFrames;        // how long the player has been off the ground
 
 
 /* ---------------------------------------------------------------------------
@@ -144,17 +194,19 @@ let elapsed = 0;      // total seconds, drives the run bob sine wave
    a little extra lift for a limited number of frames (see updatePlayer).
    ------------------------------------------------------------------------ */
 
+/**
+ * A jump press does NOT jump immediately. It records an INTENT that stays live
+ * for BUFFER_FRAMES. tryJump() below is what actually converts that intent
+ * into a jump, once the player is (or becomes) able to jump.
+ *
+ * Why: players routinely press jump a few frames before they land. Without a
+ * buffer that press is simply swallowed and the game feels unresponsive.
+ */
 function pressJump() {
   if (gameOver) { restart(); return; }
   started = true;
   jumpHeld = true;
-  // Only jump when standing on something - no mid-air jumps in Phase 1.
-  if (!player.isJumping) {
-    player.velocityY = JUMP_STRENGTH;
-    player.isJumping = true;
-    holdFrames = HOLD_FRAMES;
-    spawnDust(6, PLAYER_X + PLAYER_W / 2, player.y + PLAYER_H);
-  }
+  jumpBuffer = BUFFER_FRAMES;
 }
 
 function releaseJump() {
@@ -162,9 +214,51 @@ function releaseJump() {
   holdFrames = 0; // cutting the key short cuts the jump short
 }
 
+/**
+ * Fire a buffered jump if the player is allowed to jump right now.
+ *
+ * "Allowed" is generous on purpose. It covers the obvious case (standing on a
+ * platform) plus COYOTE TIME: for a few frames after running off a ledge the
+ * player is technically falling, but we still honour the jump. Players read
+ * that ledge moment as "I jumped right at the edge", so refusing it feels like
+ * a bug even though it is physically correct.
+ */
+function tryJump() {
+  if (jumpBuffer <= 0) return;
+
+  const grounded = player.grounded || coyoteFrames > 0;
+
+  // A grounded jump requires that we are not already rising. An AIR jump (the
+  // WINGS power-up) has no such rule - being able to save a botched jump
+  // mid-fall is the whole point of the pickup.
+  if (grounded && player.velocityY >= 0) {
+    player.velocityY = JUMP_STRENGTH;
+    airFrames = 0;
+    spawnDust(6, PLAYER_X + PLAYER_W / 2, player.y + PLAYER_H);
+    playSfx("jump");
+  } else if (!grounded && power.wings > 0 && player.airJumps > 0) {
+    player.airJumps--;
+    player.velocityY = JUMP_STRENGTH * 0.92;
+    spawnFeathers(PLAYER_X + PLAYER_W / 2, player.y + PLAYER_H);
+    playSfx("jump");
+    addPopup("DOUBLE!", "#BD93F9");
+  } else {
+    return;   // nothing we can do with this press
+  }
+
+  player.isJumping = true;
+  player.grounded = false;
+  holdFrames = jumpHeld ? HOLD_FRAMES : 0;
+  jumpBuffer = 0;
+  coyoteFrames = 0;
+}
+
+/* --- Keyboard ------------------------------------------------------------ */
+
 window.addEventListener("keydown", e => {
   if (e.code === "Space" || e.code === "ArrowUp" || e.code === "KeyW") {
     e.preventDefault();
+    unlockAudio();
     if (!e.repeat) pressJump();
   }
 });
@@ -176,8 +270,167 @@ window.addEventListener("keyup", e => {
   }
 });
 
-canvas.addEventListener("pointerdown", e => { e.preventDefault(); pressJump(); });
-window.addEventListener("pointerup", () => releaseJump());
+/* --- Touch ---------------------------------------------------------------
+   Touch is the primary input on phones, so it gets the careful treatment:
+
+   * Listeners are on the whole document, not just the canvas, so a tap
+     anywhere on screen jumps. Hunting for a button with your thumb while
+     running at full speed is not fun.
+   * passive:false + preventDefault stops iOS from scrolling the page,
+     double-tap-zooming or firing a synthetic 300ms click.
+   * activeTouches counts fingers rather than tracking one, so a second
+     finger landing and the first lifting does not drop the "hold" - that is
+     exactly what happens when a player rolls their thumb during a long jump.
+   ---------------------------------------------------------------------- */
+
+let activeTouches = 0;
+let usingTouch = false;   // once true, ignore mouse events (they are synthetic)
+
+function onTouchStart(e) {
+  usingTouch = true;
+  activeTouches += e.changedTouches.length;
+  e.preventDefault();
+  unlockAudio();
+  pressJump();
+}
+
+function onTouchEnd(e) {
+  activeTouches = Math.max(0, activeTouches - e.changedTouches.length);
+  e.preventDefault();
+  if (activeTouches === 0) releaseJump();   // only release on the LAST finger
+}
+
+document.addEventListener("touchstart",  onTouchStart, { passive: false });
+document.addEventListener("touchend",    onTouchEnd,   { passive: false });
+document.addEventListener("touchcancel", onTouchEnd,   { passive: false });
+
+// Belt and braces against iOS zoom gestures.
+document.addEventListener("gesturestart", e => e.preventDefault());
+document.addEventListener("dblclick",     e => e.preventDefault());
+
+/* --- Mouse (desktop only) ------------------------------------------------ */
+
+document.addEventListener("mousedown", e => {
+  if (usingTouch) return;
+  e.preventDefault();
+  unlockAudio();
+  pressJump();
+});
+document.addEventListener("mouseup", () => { if (!usingTouch) releaseJump(); });
+
+/* --- Responsive canvas ---------------------------------------------------
+   The game always renders at a fixed 800x600 internally, so no gameplay code
+   ever has to think about screen size. We just letterbox that fixed surface
+   into the largest 4:3 rectangle that fits the viewport.
+   ---------------------------------------------------------------------- */
+
+function resizeCanvas() {
+  const wrap = document.getElementById("wrap");
+  const hint = document.getElementById("hint");
+  const style = getComputedStyle(wrap);
+  const padX = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+  const padY = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+
+  // Decide what the hint says (and whether it shows) BEFORE measuring it,
+  // otherwise we size the canvas against a stale hint height.
+  const portraitPhone = window.innerHeight > window.innerWidth && window.innerWidth < 620;
+  if (hint) {
+    if (portraitPhone) {
+      hint.textContent = "↻ Rotate your device for a bigger view";
+      hint.style.display = "block";
+    } else {
+      hint.textContent = isTouch()
+        ? "TAP to jump — hold longer to jump higher"
+        : "SPACE / UP / W or TAP to jump — hold longer to jump higher";
+      hint.style.display = "";
+    }
+  }
+
+  const availW = wrap.clientWidth - padX;
+  const hintH = hint && hint.offsetParent !== null ? hint.offsetHeight + 8 : 0;
+  const availH = wrap.clientHeight - padY - hintH;
+
+  const scale = Math.min(availW / W, availH / H);
+  canvas.style.width  = Math.floor(W * scale) + "px";
+  canvas.style.height = Math.floor(H * scale) + "px";
+  // Rounded corners look wrong once the game fills a phone screen edge to edge.
+  canvas.style.borderRadius = scale < 0.75 ? "0" : "10px";
+}
+
+window.addEventListener("resize", resizeCanvas);
+window.addEventListener("orientationchange", () => setTimeout(resizeCanvas, 120));
+
+/* --- Pause when the app is backgrounded ----------------------------------
+   Without this, taking a phone call means coming back to a dead run. ----- */
+
+let paused = false;
+document.addEventListener("visibilitychange", () => {
+  paused = document.hidden;
+  if (!document.hidden) lastTime = performance.now();
+});
+
+
+/* ---------------------------------------------------------------------------
+   3b. AUDIO
+   ----------------------------------------------------------------------------
+   Every sound is synthesised with WebAudio oscillators, so the game stays a
+   single file with no asset downloads.
+
+   The iOS rule that matters: an AudioContext starts "suspended" and can only
+   be resumed inside a real user gesture. unlockAudio() is therefore called
+   from the first keydown / touchstart / mousedown, not at load time.
+   ------------------------------------------------------------------------ */
+
+let audioCtx = null;
+let audioReady = false;
+let muted = false;
+
+function unlockAudio() {
+  if (audioReady) return;
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    audioCtx = new AC();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+    audioReady = true;
+  } catch (e) {
+    audioReady = false;   // audio is a nice-to-have; never let it break play
+  }
+}
+
+/** One short synthesised blip. type picks the waveform + envelope. */
+function tone(freq, dur, type, vol, slideTo) {
+  if (!audioReady || !audioCtx || muted) return;
+  try {
+    const t = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = type || "square";
+    osc.frequency.setValueAtTime(freq, t);
+    if (slideTo) osc.frequency.exponentialRampToValueAtTime(slideTo, t + dur);
+    gain.gain.setValueAtTime(vol, t);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start(t);
+    osc.stop(t + dur + 0.02);
+  } catch (e) { /* ignore - audio must never break the game */ }
+}
+
+function playSfx(name) {
+  switch (name) {
+    case "jump":   tone(420, 0.12, "square",   0.16, 720); break;
+    case "land":   tone(150, 0.07, "sine",     0.10, 90);  break;
+    // Coin pitch rises with the combo, so a long streak audibly climbs.
+    case "coin":   tone(880 + Math.min(combo, 16) * 45, 0.09, "square", 0.14,
+                        1320 + Math.min(combo, 16) * 45); break;
+    case "power":  tone(520, 0.30, "sawtooth", 0.16, 1180); break;
+    case "shieldBreak": tone(300, 0.28, "sawtooth", 0.20, 110); break;
+    case "death":  tone(320, 0.55, "sawtooth", 0.22, 60);  break;
+    case "mission":tone(660, 0.16, "triangle", 0.18, 990); break;
+    case "zone":   tone(523, 0.22, "triangle", 0.16, 784); break;
+    case "record": tone(784, 0.30, "square",   0.18, 1568); break;
+  }
+}
 
 
 /* ---------------------------------------------------------------------------
@@ -199,50 +452,101 @@ window.addEventListener("pointerup", () => releaseJump());
 
    KEEPING GAPS JUMPABLE
    ---------------------
-   A gap is only fair if the player can physically clear it. With
-   JUMP_STRENGTH = -15 and GRAVITY = 0.8 the airtime is roughly
-       2 * 15 / 0.8 = 37 frames
-   and at the top speed of 10 px/frame that covers ~370 pixels. We cap gaps
-   at 220 pixels, comfortably inside that budget, and we also cap how much
-   HIGHER the next platform may be (MAX_STEP_UP) because rising costs airtime.
+   A gap is only fair if the player can physically clear it, and the honest
+   budget is not total airtime - it is the time spent ABOVE the height of the
+   platform being landed on.
+
+   A plain jump (no hold) rises 15/0.8 = 18.75 frames to a peak of ~141px,
+   then falls under GRAVITY_FALL. Landing LEVEL gives ~35 frames of travel,
+   which is 350px at the 10px/frame top speed. But landing 90px HIGHER only
+   leaves ~21 frames above that height, i.e. ~210px - and the raw gap cap is
+   220px. That combination is unclearable without a perfect hold, which is
+   exactly the kind of death that feels like the game cheated.
+
+   So every pixel of climb is charged against the horizontal budget in
+   reachableGap() below. Flat ground keeps the full 220px; a maximum 90px
+   climb is cut to ~126px. The staircase sections stay tight and readable
+   instead of being coin-flips.
    ------------------------------------------------------------------------ */
 
 const MAX_STEP_UP = 90;   // next platform may be at most this much higher
-const MIN_PLAT_Y  = 280;  // highest a floating platform may sit
+// The ceiling is deliberately high. MAX_STEP_UP still caps how fast the world
+// can climb, so reaching the top takes a staircase of three or four platforms -
+// which is exactly the kind of ascending section that makes a run memorable,
+// and it puts the action in the middle of the screen instead of the bottom.
+const MIN_PLAT_Y  = 200;  // highest a floating platform may sit
 const MAX_PLAT_Y  = GROUND_Y;
 
 function rand(min, max)     { return Math.random() * (max - min) + min; }
 function randInt(min, max)  { return Math.floor(rand(min, max + 1)); }
 
-// Difficulty knobs, all driven by the current score.
+/**
+ * Horizontal distance a plain, un-held jump covers at the CURRENT speed.
+ * Airtime is ~35 frames (18.75 rising under GRAVITY, ~16 falling under the
+ * heavier GRAVITY_FALL), and the world slides by at scrollSpeed the whole
+ * time, so reach is simply airtime x speed.
+ */
+function jumpReach() { return 35 * scrollSpeed; }
+
+/**
+ * Gap sizes are expressed as a FRACTION of jumpReach(), never as absolute
+ * pixels. That fixes a subtle but nasty inversion: with fixed pixel gaps the
+ * player covers the least ground per jump at the START of a run (speed 5,
+ * ~175px reach), so the opening - the part that should ease you in - was
+ * quietly the hardest part of the game, while the fast late game was trivial.
+ *
+ * Keeping gaps proportional means difficulty comes from where it should: the
+ * shrinking reaction time as the world speeds up, plus the gentle tightening
+ * below.
+ */
 function gapRange() {
-  const min = Math.min(80  + Math.floor(score / 1000) * 10, 160);
-  const max = Math.min(150 + Math.floor(score / 500)  * 15, 220);
-  return [min, Math.max(min + 20, max)];
+  const reach = jumpReach();
+  const tighten = Math.min(0.10, distance / 90000);  // creeps up as you survive
+  return [reach * (0.34 + tighten), reach * (0.52 + tighten * 1.4)];
 }
 
 function spikeChance() {
-  if (score < 500)  return 0;
-  if (score < 1500) return 0.12;
+  if (distance < 4000)  return 0;      // first ~400m is spike-free
+  if (distance < 14000) return 0.12;
   return 0.22;
 }
 
+/**
+ * Speed ramps on DISTANCE, never on score. Score now includes coins, combos
+ * and bonuses, so ramping on it would mean a player who collects well gets
+ * punished with sudden speed spikes they did not earn by surviving. Distance
+ * is the honest measure of "how long have you kept this alive".
+ */
 function targetSpeed() {
-  return Math.min(START_SPEED + Math.floor(score / 500) * 0.5, MAX_SPEED);
+  return Math.min(START_SPEED + Math.floor(distance / 5000) * 0.5, MAX_SPEED);
 }
 
 /**
  * Append one platform to the right of the last one, then decorate it with
  * coins and (maybe) a spike.
  */
+/**
+ * The widest gap the player can actually cross while also climbing `rise`
+ * pixels. See the KEEPING GAPS JUMPABLE note above - climbing eats horizontal
+ * budget, so the two are traded off against each other rather than capped
+ * independently.
+ */
+function reachableGap(rise) {
+  const full = jumpReach() * 0.62;         // 38% slack for imperfect timing
+  if (rise <= 0) return full;              // landing level or lower: full reach
+  // Climbing burns the airtime that would otherwise carry you forward, so the
+  // budget shrinks toward zero as the rise approaches the jump's peak height.
+  return Math.max(45, full * (1 - rise / 150));
+}
+
 function generatePlatform() {
   const last = platforms[platforms.length - 1];
   const [gapMin, gapMax] = gapRange();
-  const gap = rand(gapMin, gapMax);
+  let gap = rand(gapMin, gapMax);
 
   // Decide whether this is ground level or a floating stone slab.
   // Early on we lean heavily on ground platforms so it stays gentle.
-  const floatChance = score < 300 ? 0.1 : 0.35;
+  const floatChance = distance < 3000 ? 0.1 : 0.35;
   const isFloating = Math.random() < floatChance;
 
   let y, width, type, wantsSpike = false;
@@ -261,6 +565,9 @@ function generatePlatform() {
     wantsSpike = Math.random() < spikeChance();
     width = wantsSpike ? rand(340, 430) : rand(150, 400);
   }
+
+  // Charge the climb against the horizontal budget so the jump stays possible.
+  gap = Math.min(gap, reachableGap(last.y - y));
 
   const plat = {
     x: last.x + last.width + gap,
@@ -289,7 +596,9 @@ function decoratePlatform(plat, wantsSpike) {
   let spikeX = null;
   if (wantsSpike && plat.width > LANDING_ZONE + 120) {
     spikeX = plat.x + rand(LANDING_ZONE, plat.width - 70);
-    spikes.push({ x: spikeX, y: plat.y - 30, size: 30 });
+    // near/scored drive the "close call" bonus in checkCollisions.
+    spikes.push({ x: spikeX, y: plat.y - 30, size: 30,
+                  near: Infinity, scored: false });
   }
 
   // --- Coins: 30% chance, arranged in a straight line or a gentle arc. ---
@@ -305,6 +614,18 @@ function decoratePlatform(plat, wantsSpike) {
       // An arc lifts the middle coins so the player must jump through them.
       const lift = arc ? Math.sin((i / (count - 1)) * Math.PI) * 45 : 0;
       coins.push({ x: x, y: plat.y - 42 - lift, collected: false });
+    }
+  }
+
+  // --- Power-up: floats above the platform, clear of any spike. ---
+  if (plat.width > 160 && Math.random() < powerChance()) {
+    const px = plat.x + plat.width / 2;
+    if (spikeX === null || Math.abs(px - spikeX) > 70) {
+      powerups.push({
+        x: px, y: plat.y - 70,
+        type: POWER_TYPES[randInt(0, POWER_TYPES.length - 1)],
+        taken: false, bob: Math.random() * Math.PI * 2
+      });
     }
   }
 }
@@ -349,6 +670,13 @@ function seedBackground() {
     });
   }
 
+  // Stars sit behind everything and only become visible in night zones.
+  stars = [];
+  for (let i = 0; i < 60; i++) {
+    stars.push({ x: rand(0, W), y: rand(10, 320), r: rand(0.7, 1.9),
+                 tw: Math.random() * Math.PI * 2 });
+  }
+
   // Foreground grass/flowers along the very bottom of the screen.
   grassTufts = [];
   for (let i = 0; i < 24; i++) {
@@ -360,6 +688,266 @@ function seedBackground() {
     });
   }
 }
+
+
+/* ---------------------------------------------------------------------------
+   4b. POWER-UPS
+   ----------------------------------------------------------------------------
+   Three pickups, each chosen because it adds a decision rather than just a
+   number:
+     MAGNET  - coins bend toward you, so you can take the risky high line and
+               still sweep the safe one.
+     SHIELD  - absorbs one spike hit, which lets a player gamble on a tight
+               near-miss for the bonus.
+     WINGS   - grants a mid-air second jump for a while, opening routes that
+               are otherwise unreachable.
+   ------------------------------------------------------------------------ */
+
+const POWER_TYPES = ["magnet", "shield", "wings"];
+const MAGNET_FRAMES = 480;   // 8 seconds at 60fps
+const WINGS_FRAMES  = 660;   // 11 seconds
+const MAGNET_RANGE  = 190;
+
+let powerups;                // pickups currently in the world
+let power;                   // { magnet, shield, wings } frames remaining
+
+function powerChance() {
+  // Rare enough to feel like a treat, common enough to shape a run.
+  return distance < 6000 ? 0.05 : 0.11;
+}
+
+function activatePower(type) {
+  playSfx("power");
+  shake(5);
+  if (type === "magnet") {
+    power.magnet = MAGNET_FRAMES;
+    addPopup("MAGNET!", "#FF79C6");
+  } else if (type === "shield") {
+    power.shield = 1;
+    addPopup("SHIELD!", "#8BE9FD");
+  } else {
+    power.wings = WINGS_FRAMES;
+    addPopup("WINGS!", "#BD93F9");
+  }
+  stats.runPowerups++;
+}
+
+function updatePowers() {
+  if (power.magnet > 0) power.magnet--;
+  if (power.wings  > 0) power.wings--;
+  if (invuln > 0) invuln--;
+
+  // Magnet: drag nearby uncollected coins toward the player.
+  if (power.magnet > 0) {
+    const cx = PLAYER_X + PLAYER_W / 2, cy = player.y + PLAYER_H / 2;
+    for (const c of coins) {
+      if (c.collected) continue;
+      const dx = cx - c.x, dy = cy - c.y;
+      const d = Math.hypot(dx, dy);
+      if (d < MAGNET_RANGE && d > 0.01) {
+        const pull = 7 * (1 - d / MAGNET_RANGE) + 1.5;
+        c.x += (dx / d) * pull;
+        c.y += (dy / d) * pull;
+      }
+    }
+  }
+}
+
+
+/* ---------------------------------------------------------------------------
+   4c. BIOMES
+   ----------------------------------------------------------------------------
+   The world changes its whole palette every ZONE_LENGTH of distance. This is
+   pure curiosity bait: "what does the next zone look like?" is one of the
+   cheapest and strongest reasons to keep running.
+
+   Rather than snapping, we linearly interpolate every colour from the old
+   palette to the new one across ZONE_FADE frames, so the world appears to
+   change light gradually.
+   ------------------------------------------------------------------------ */
+
+const ZONE_LENGTH = 7000;   // 700 metres per zone
+const ZONE_FADE   = 150;    // frames the crossfade takes
+
+const BIOMES = [
+  { name: "MEADOW", stars: false,
+    skyTop: "#87CEEB", skyBottom: "#FFFACD",
+    hills: "#2E7D32", hillsFar: "#4CAF50",
+    grass: "#7EC850", grassDark: "#5FA83A",
+    dirt: "#8B4513",  dirtDark: "#6B3410",
+    cloud: "#FFFFFF", sun: "#FFFFC8" },
+  { name: "SUNSET RIDGE", stars: false,
+    skyTop: "#FF7E5F", skyBottom: "#FEB47B",
+    hills: "#5C2A5E", hillsFar: "#B83B5E",
+    grass: "#F0A05D", grassDark: "#C97A4A",
+    dirt: "#6A4A3C",  dirtDark: "#4A3229",
+    cloud: "#FFE0CC", sun: "#FFF0A0" },
+  { name: "MIDNIGHT", stars: true,
+    skyTop: "#0F2027", skyBottom: "#2C5364",
+    hills: "#16213E", hillsFar: "#1F4068",
+    grass: "#3DDC97", grassDark: "#2BA97A",
+    dirt: "#3A3A52",  dirtDark: "#2A2A3C",
+    cloud: "#C8D8FF", sun: "#E8F0FF" },
+  { name: "FROST PEAKS", stars: false,
+    skyTop: "#9BD3F0", skyBottom: "#E8F6FF",
+    hills: "#8FA6B2", hillsFar: "#B6C8D2",
+    grass: "#FFFFFF", grassDark: "#CFE2EC",
+    dirt: "#7B8FA0",  dirtDark: "#5A6E7E",
+    cloud: "#FFFFFF", sun: "#FFFFFF" }
+];
+
+let pal;            // the palette actually painted this frame
+let zoneIndex;      // which biome we are in
+let zoneFade;       // frames left in the current crossfade
+let stars;          // star field, only visible in night zones
+let zoneBanner;     // frames left showing the "ZONE 2 - MIDNIGHT" banner
+
+function hexToRgb(h) {
+  const n = parseInt(h.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+function mixHex(a, b, t) {
+  const A = hexToRgb(a), B = hexToRgb(b);
+  const r = Math.round(A[0] + (B[0] - A[0]) * t);
+  const g = Math.round(A[1] + (B[1] - A[1]) * t);
+  const bl = Math.round(A[2] + (B[2] - A[2]) * t);
+  return "rgb(" + r + "," + g + "," + bl + ")";
+}
+
+/** Recompute `pal`, crossfading from the previous biome into the current one. */
+function updateBiome() {
+  const want = Math.floor(distance / ZONE_LENGTH) % BIOMES.length;
+  if (want !== zoneIndex) {
+    zoneIndex = want;
+    zoneFade = ZONE_FADE;
+    zoneBanner = 150;
+    playSfx("zone");
+  }
+  if (zoneFade > 0) zoneFade--;
+  if (zoneBanner > 0) zoneBanner--;
+
+  const cur  = BIOMES[zoneIndex];
+  const prev = BIOMES[(zoneIndex - 1 + BIOMES.length) % BIOMES.length];
+  const t = zoneFade > 0 ? 1 - zoneFade / ZONE_FADE : 1;
+
+  pal = {};
+  for (const k of ["skyTop","skyBottom","hills","hillsFar","grass","grassDark",
+                   "dirt","dirtDark","cloud","sun"]) {
+    pal[k] = t >= 1 ? cur[k] : mixHex(prev[k], cur[k], t);
+  }
+  // Stars fade in for night zones and out again afterwards.
+  pal.starAlpha = (cur.stars ? t : 0) + (prev.stars ? 1 - t : 0);
+  pal.name = cur.name;
+}
+
+
+/* ---------------------------------------------------------------------------
+   4d. MISSIONS, RECORDS & PROGRESSION
+   ----------------------------------------------------------------------------
+   Missions are the single strongest retention mechanic in this genre. The
+   reason is simple: a run that ends with "2 more coins to go" is not really
+   over. Three are active at a time, and finishing one immediately deals a
+   replacement, so there is always an unfinished goal on screen.
+   ------------------------------------------------------------------------ */
+
+const SAVE_KEY = "turboDash.save.v1";
+
+/** "1 coin" / "3 coins" - targets start at 1, so plurals have to be right. */
+function plural(n, word) { return n + " " + word + (n === 1 ? "" : "s"); }
+
+// Each mission reads one counter out of `stats` and compares it to a target.
+const MISSION_POOL = [
+  { id: "coins",   text: n => "Collect " + plural(n, "coin") + " in one run",  key: "runCoins",    targets: [10, 20, 35, 55] },
+  { id: "dist",    text: n => "Run " + n + "m in one run",                     key: "runMeters",   targets: [300, 700, 1200, 2000] },
+  { id: "combo",   text: n => "Reach a x" + n + " coin combo",                 key: "runBestMult", targets: [3, 4, 6, 8] },
+  { id: "near",    text: n => "Get " + plural(n, "close call"),                key: "runNearMiss", targets: [1, 3, 6, 10] },
+  { id: "air",     text: n => "Land " + plural(n, "big-air jump"),             key: "runBigAir",   targets: [3, 6, 10, 16] },
+  { id: "power",   text: n => "Grab " + plural(n, "power-up") + " in one run", key: "runPowerups", targets: [1, 2, 4, 6] },
+  { id: "total",   text: n => "Collect " + plural(n, "coin") + " all-time",    key: "totalCoins",  targets: [50, 150, 400, 900] }
+];
+
+let save;        // persisted profile
+let stats;       // counters for the CURRENT run (plus mirrored lifetime ones)
+let missions;    // the three active missions
+
+function defaultSave() {
+  return { best: 0, bestScore: 0, bestCombo: 0, totalCoins: 0, runs: 0,
+           rank: 1, missionsDone: 0, tier: {} };
+}
+
+function loadSave() {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    save = raw ? Object.assign(defaultSave(), JSON.parse(raw)) : defaultSave();
+  } catch (e) {
+    save = defaultSave();      // private mode / blocked storage - play anyway
+  }
+  bestDistance = save.best || 0;
+}
+
+function persist() {
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (e) {}
+}
+
+/** Deal one mission, at the difficulty tier the player has reached for it. */
+function makeMission(def) {
+  const tier = Math.min(def.targets.length - 1, save.tier[def.id] || 0);
+  const target = def.targets[tier];
+  return { id: def.id, key: def.key, target, tier,
+           text: def.text(target), done: false };
+}
+
+function rollMissions() {
+  const pool = MISSION_POOL.slice();
+  missions = [];
+  while (missions.length < 3 && pool.length) {
+    const def = pool.splice(Math.floor(Math.random() * pool.length), 1)[0];
+    missions.push(makeMission(def));
+  }
+}
+
+/** Called every frame: tick progress and celebrate anything just completed. */
+function checkMissions() {
+  for (const m of missions) {
+    if (m.done) continue;
+    if (missionProgress(m) >= m.target) {
+      m.done = true;
+      save.missionsDone++;
+      save.tier[m.id] = Math.min(3, (save.tier[m.id] || 0) + 1);
+      save.rank = 1 + Math.floor(save.missionsDone / 3);
+      addScore(250);
+      addPopup("MISSION DONE! +250", "#50FA7B");
+      playSfx("mission");
+      shake(6);
+      persist();
+    }
+  }
+}
+
+function missionProgress(m) {
+  return m.key === "totalCoins" ? save.totalCoins + stats.runCoins : stats[m.key];
+}
+
+function resetRunStats() {
+  stats = { runCoins: 0, runMeters: 0, runBestMult: 1,
+            runNearMiss: 0, runBigAir: 0, runPowerups: 0 };
+}
+
+/** Bank a finished run into the persisted profile. */
+function finishRun() {
+  const meters = Math.floor(distance / 10);
+  save.runs++;
+  save.totalCoins += stats.runCoins;
+  newRecord = false;
+  if (Math.floor(score) > save.bestScore) { save.bestScore = Math.floor(score); newRecord = true; }
+  if (meters > save.best) save.best = meters;
+  if (stats.runBestMult > save.bestCombo) save.bestCombo = stats.runBestMult;
+  bestDistance = save.best;
+  if (newRecord) playSfx("record");
+  persist();
+}
+
+let newRecord = false;
 
 
 /* ---------------------------------------------------------------------------
@@ -405,12 +993,21 @@ function updatePlayer() {
     holdFrames--;
   }
 
-  player.velocityY += GRAVITY;
+  // Asymmetric gravity: float up, drop fast. See the GRAVITY constants.
+  player.velocityY += player.velocityY < 0 ? GRAVITY : GRAVITY_FALL;
   if (player.velocityY > MAX_FALL_SPEED) player.velocityY = MAX_FALL_SPEED;
 
   player.y += player.velocityY;
 
   if (squashTimer > 0) squashTimer--;
+  if (jumpBuffer > 0) jumpBuffer--;
+  if (!player.grounded) airFrames++;
+
+  // A coin streak lapses if the player goes too long without picking one up.
+  if (comboTimer > 0) {
+    comboTimer--;
+    if (comboTimer === 0) combo = 0;
+  }
 }
 
 /**
@@ -434,6 +1031,14 @@ function scrollWorld() {
   for (const p of platforms) p.x -= s;
   for (const c of coins)     c.x -= s;
   for (const sp of spikes)   sp.x -= s;
+  for (const pu of powerups) { pu.x -= s; pu.bob += 0.09; }
+
+  for (const p of popups) { p.x -= s; p.y += p.vy; p.life--; }
+
+  for (const st of stars) {
+    st.x -= s * 0.08;                     // stars are effectively at infinity
+    if (st.x < -4) { st.x = W + rand(0, 40); st.y = rand(10, 300); }
+  }
 
   for (const cl of clouds) {
     cl.x -= s * 0.2;
@@ -465,6 +1070,8 @@ function recycleWorld() {
   coins     = coins.filter(c => c.x > -40 && !c.collected);
   spikes    = spikes.filter(s => s.x + s.size > -40);
   particles = particles.filter(p => p.life > 0);
+  powerups  = powerups.filter(p => p.x > -40 && !p.taken);
+  popups    = popups.filter(p => p.life > 0);
 
   // Keep generating until we have ground well past the right edge.
   let last = platforms[platforms.length - 1];
@@ -507,6 +1114,14 @@ function checkCollisions() {
       if (player.isJumping) {
         squashTimer = 6;              // squash-on-landing effect
         spawnDust(8, px + PLAYER_W / 2, p.y);
+        playSfx("land");
+        // BIG AIR: reward long hang time so risky, committed jumps pay off.
+        if (airFrames > BIG_AIR_FRAMES) {
+          const bonus = 25 * Math.min(4, Math.floor(airFrames / BIG_AIR_FRAMES) + 1);
+          addScore(bonus);
+          addPopup("BIG AIR +" + bonus, "#8BE9FD");
+          stats.runBigAir++;
+        }
       }
       player.isJumping = false;
       landed = true;
@@ -515,7 +1130,14 @@ function checkCollisions() {
   }
 
   // Not standing on anything? Then we are airborne (walked off an edge).
-  if (!landed) player.isJumping = true;
+  player.grounded = landed;
+  if (!landed) {
+    player.isJumping = true;
+  } else {
+    airFrames = 0;
+    // Landing refills the WINGS mid-air jump.
+    player.airJumps = power.wings > 0 ? 1 : 0;
+  }
 
   // --- Coins ---
   const cx = px + PLAYER_W / 2;
@@ -525,35 +1147,137 @@ function checkCollisions() {
     const dx = cx - c.x;
     const dy = cy - c.y;
     if (dx * dx + dy * dy < 32 * 32) {   // circle-vs-circle, generous radius
-      c.collected = true;
-      coinCount++;
-      spawnSparkle(c.x, c.y);
+      collectCoin(c);
     }
   }
 
-  // --- Spikes: any overlap is instant death. Inset the boxes slightly so
-  //     near-misses feel fair rather than punishing. ---
+  // --- Spikes ---
   for (const s of spikes) {
-    if (px + PLAYER_W - 6 > s.x + 4 &&
+    const horizOver = px + PLAYER_W > s.x && px < s.x + s.size;
+
+    // Track the tightest vertical clearance while we are over this spike, so
+    // that once it is behind us we can tell whether it was a close shave.
+    if (horizOver) {
+      const clearance = s.y - (py + PLAYER_H);
+      if (clearance >= 0 && clearance < s.near) s.near = clearance;
+    }
+
+    // NEAR MISS: skimming a spike is the most satisfying thing a runner can
+    // do, so it is worth points. Awarded once, after the spike is behind us.
+    if (!s.scored && s.x + s.size < px) {
+      s.scored = true;
+      if (s.near < NEAR_MISS_PX) {
+        addScore(75);
+        addPopup("CLOSE CALL! +75", "#FF79C6");
+        stats.runNearMiss++;
+        shake(4);
+        playSfx("mission");
+      }
+    }
+
+    // Any real overlap is instant death. The boxes are inset slightly so that
+    // near-misses read as near-misses rather than as unfair hits.
+    if (invuln <= 0 &&
+        px + PLAYER_W - 6 > s.x + 4 &&
         px + 6 < s.x + s.size - 4 &&
         py + PLAYER_H - 4 > s.y + 8 &&
         py + 4 < s.y + s.size) {
-      die();
+      die("spike");
       return;
     }
   }
 
+  // --- Power-ups ---
+  for (const pu of powerups) {
+    if (pu.taken) continue;
+    const dx = cx - pu.x, dy = cy - pu.y;
+    if (dx * dx + dy * dy < 36 * 36) {
+      pu.taken = true;
+      activatePower(pu.type);
+      if (pu.type === "wings") player.airJumps = 1;
+    }
+  }
+
   // --- Fell into a gap ---
-  if (player.y > H + 50) die();
+  if (player.y > H + 50) die("fall");
 }
 
-function die() {
+/** Pick up one coin: bank the points, grow the streak, spray sparkles. */
+function collectCoin(c) {
+  c.collected = true;
+  coinCount++;
+
+  combo++;
+  comboTimer = COMBO_WINDOW;
+  const mult = multiplier();
+  const pts = 10 * mult;
+  addScore(pts);
+
+  stats.runCoins++;
+  if (mult > stats.runBestMult) stats.runBestMult = mult;
+
+  spawnSparkle(c.x, c.y);
+  playSfx("coin");
+
+  // Only shout about the multiplier once it is actually interesting.
+  if (mult > 1 && combo % 3 === 0) {
+    addPopup("x" + mult + " COMBO!", "#FFD700");
+  }
+}
+
+/** Current coin multiplier: every 3 coins in a streak adds one, capped. */
+function multiplier() {
+  return Math.min(MAX_MULT, 1 + Math.floor(combo / 3));
+}
+
+function addScore(n) { score += n; }
+
+function addPopup(text, color) {
+  popups.push({
+    x: PLAYER_X + PLAYER_W / 2 + rand(-10, 10),
+    y: player.y - 12,
+    text, color,
+    life: 60, maxLife: 60,
+    vy: -1.1
+  });
+}
+
+function die(cause) {
   if (gameOver) return;
+
+  // A shield eats one hit instead of ending the run. Falling into a pit is
+  // never survivable - there is no ground left to put the player back on.
+  if (cause === "spike" && power.shield > 0) {
+    power.shield = 0;
+    invuln = 90;
+    shake(14);
+    hitStop = 6;
+    playSfx("shieldBreak");
+    addPopup("SHIELD SAVED YOU!", "#8BE9FD");
+    return;
+  }
+
   gameOver = true;
   player.isAlive = false;
+  deathCause = cause;
+  shake(18);
+  hitStop = 8;
+  playSfx("death");
+
   const meters = Math.floor(distance / 10);
   if (meters > bestDistance) bestDistance = meters;
+  finishRun();
 }
+
+/* --- Screen shake & hit-stop ---------------------------------------------
+   Shake sells impact; hit-stop (freezing the world for a few frames on a big
+   event) makes that impact land. Both are pure feedback - they change nothing
+   about the simulation, only how hard it hits.
+   ---------------------------------------------------------------------- */
+
+let shakeAmount = 0, hitStop = 0, invuln = 0, deathCause = null;
+
+function shake(n) { shakeAmount = Math.max(shakeAmount, n); }
 
 /* --- Particles ----------------------------------------------------------- */
 
@@ -564,6 +1288,18 @@ function spawnDust(n, x, y) {
       vx: rand(-1.4, 0.4), vy: rand(-2.2, -0.4),
       life: randInt(14, 26), size: rand(2, 5),
       color: "rgba(255,255,255,0.75)"
+    });
+  }
+}
+
+function spawnFeathers(x, y) {
+  for (let i = 0; i < 12; i++) {
+    const a = Math.random() * Math.PI * 2;
+    particles.push({
+      x, y,
+      vx: Math.cos(a) * rand(1, 3), vy: Math.abs(Math.sin(a)) * rand(0.5, 2),
+      life: randInt(18, 32), size: rand(2, 5),
+      color: Math.random() < 0.5 ? "#BD93F9" : "#E9D5FF"
     });
   }
 }
@@ -589,22 +1325,38 @@ function spawnSparkle(x, y) {
    ------------------------------------------------------------------------ */
 
 function drawBackground() {
-  // Layer 1: sky gradient
+  // Layer 1: sky gradient - colours come from the current biome palette.
   const g = ctx.createLinearGradient(0, 0, 0, H);
-  g.addColorStop(0, C.skyTop);
-  g.addColorStop(1, C.skyBottom);
+  g.addColorStop(0, pal.skyTop);
+  g.addColorStop(1, pal.skyBottom);
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, W, H);
 
-  // A soft sun glow in the upper right
+  // Layer 1b: stars, faded in only for night biomes.
+  if (pal.starAlpha > 0.01) {
+    for (const st of stars) {
+      const twinkle = 0.55 + Math.sin(elapsed * 3 + st.tw) * 0.45;
+      ctx.globalAlpha = pal.starAlpha * twinkle;
+      ctx.fillStyle = "#FFFFFF";
+      ctx.beginPath();
+      ctx.arc(st.x, st.y, st.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // A soft sun / moon glow in the upper right.
+  const sunRgb = pal.sun.startsWith("#") ? hexToRgb(pal.sun).join(",")
+                                         : pal.sun.slice(4, -1);
   const sun = ctx.createRadialGradient(660, 90, 10, 660, 90, 110);
-  sun.addColorStop(0, "rgba(255,255,200,0.95)");
-  sun.addColorStop(1, "rgba(255,255,200,0)");
+  sun.addColorStop(0, "rgba(" + sunRgb + ",0.95)");
+  sun.addColorStop(1, "rgba(" + sunRgb + ",0)");
   ctx.fillStyle = sun;
   ctx.fillRect(540, -20, 240, 240);
 
   // Layer 2: clouds - each cloud is three overlapping circles.
-  ctx.fillStyle = "rgba(255,255,255,0.92)";
+  ctx.fillStyle = pal.cloud;
+  ctx.globalAlpha = 0.92;
   for (const cl of clouds) {
     const s = cl.scale;
     ctx.beginPath();
@@ -613,10 +1365,11 @@ function drawBackground() {
     ctx.arc(cl.x + 54 * s, cl.y,          20 * s, 0, Math.PI * 2);
     ctx.fill();
   }
+  ctx.globalAlpha = 1;
 
   // Layer 3: rolling hills, far layer first so near hills overlap them.
   for (const far of [true, false]) {
-    ctx.fillStyle = far ? C.hillsFar : C.hills;
+    ctx.fillStyle = far ? pal.hillsFar : pal.hills;
     for (const h of hills) {
       if (h.far !== far) continue;
       const baseY = GROUND_Y + 40;
@@ -635,22 +1388,22 @@ function drawPlatforms() {
 
     if (p.type === "ground") {
       // Dirt body extends all the way to the bottom of the screen.
-      ctx.fillStyle = C.dirt;
+      ctx.fillStyle = pal.dirt;
       ctx.fillRect(p.x, p.y + 8, p.width, H - p.y);
-      ctx.fillStyle = C.dirtDark;
+      ctx.fillStyle = pal.dirtDark;
       for (let i = 0; i < p.width; i += 40) {
         ctx.fillRect(p.x + i + 12, p.y + 34, 10, 6);
         ctx.fillRect(p.x + i + 26, p.y + 58, 8, 5);
       }
 
       // Grass cap
-      ctx.fillStyle = C.grass;
+      ctx.fillStyle = pal.grass;
       ctx.fillRect(p.x, p.y, p.width, 14);
-      ctx.fillStyle = C.grassDark;
+      ctx.fillStyle = pal.grassDark;
       ctx.fillRect(p.x, p.y + 12, p.width, 4);
 
       // Grass tufts: small triangles poking up from the surface.
-      ctx.fillStyle = C.grass;
+      ctx.fillStyle = pal.grass;
       for (const t of p.tufts) {
         const tx = p.x + t * (p.width - 12) + 6;
         ctx.beginPath();
@@ -824,6 +1577,25 @@ function drawPlayer() {
   const x = PLAYER_X - squash / 2;
   const y = player.y + bob + squash;
 
+  // WINGS: little feathers on the character's back while the power-up is live,
+  // so the player can see at a glance that a second jump is available.
+  if (power.wings > 0) {
+    const flap = Math.sin(elapsed * 18) * 5;
+    ctx.save();
+    ctx.translate(x + w / 2, y + h / 2);
+    ctx.fillStyle = player.airJumps > 0 ? "#BD93F9" : "#6B4E9E";
+    ctx.strokeStyle = "#3B2A5E";
+    ctx.lineWidth = 2;
+    for (const dir of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(dir * 14, -2);
+      ctx.quadraticCurveTo(dir * 30, -14 + flap, dir * 24, 6 + flap);
+      ctx.quadraticCurveTo(dir * 19, -1, dir * 14, -2);
+      ctx.fill(); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   ctx.save();
   // Rotate about the character's centre so the tilt looks like a lean.
   ctx.translate(x + w / 2, y + h / 2);
@@ -833,6 +1605,9 @@ function drawPlayer() {
   ctx.lineWidth = 2;
   ctx.strokeStyle = C.outline;
   ctx.lineJoin = "round";
+
+  // Flash the character while briefly invulnerable after a shield break.
+  if (invuln > 0 && Math.floor(invuln / 4) % 2 === 0) ctx.globalAlpha = 0.45;
 
   // The 40x40 box is split so every limb stays inside the collision box:
   //   y 0  .. 26  body (with the face)
@@ -890,13 +1665,30 @@ function drawPlayer() {
   ctx.stroke();
 
   ctx.restore();
+  ctx.globalAlpha = 1;
+
+  // SHIELD: a translucent bubble drawn over the character. It sits outside the
+  // rotated transform so it stays a circle no matter how the body is tilted.
+  if (power.shield > 0) {
+    const cx = x + w / 2, cy = y + h / 2;
+    const pulse = 24 + Math.sin(elapsed * 6) * 1.6;
+    ctx.save();
+    ctx.strokeStyle = "rgba(139,233,253,0.95)";
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(cx, cy, pulse, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = "rgba(139,233,253,0.20)";
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.55)";
+    ctx.beginPath(); ctx.arc(cx - 8, cy - 9, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
 }
 
 function drawForeground() {
   // Layer 4: fast-moving grass and flowers hugging the bottom edge.
   for (const g of grassTufts) {
     const baseY = H - 2;
-    ctx.strokeStyle = "#5FA83A";
+    ctx.strokeStyle = pal.grassDark;
     ctx.lineWidth = 3;
     ctx.beginPath();
     ctx.moveTo(g.x, baseY);
@@ -921,68 +1713,271 @@ function drawParticles() {
   ctx.globalAlpha = 1;
 }
 
-function outlinedText(text, x, y, font, fill, align) {
+/**
+ * Text with a dark outline so it stays legible over any biome. `lw` is the
+ * outline width - small labels need a THIN outline, because a 5px stroke on
+ * 16px glyphs simply swallows the letters.
+ */
+function outlinedText(text, x, y, font, fill, align, lw) {
   ctx.font = font;
   ctx.textAlign = align || "left";
-  ctx.lineWidth = 5;
+  ctx.lineWidth = lw || 5;
+  ctx.lineJoin = "round";
   ctx.strokeStyle = "rgba(0,0,0,0.85)";
   ctx.strokeText(text, x, y);
   ctx.fillStyle = fill;
   ctx.fillText(text, x, y);
 }
 
+/* --- Power-up pickups ----------------------------------------------------- */
+
+function drawPowerups() {
+  for (const pu of powerups) {
+    if (pu.taken || pu.x < -40 || pu.x > W + 40) continue;
+    const y = pu.y + Math.sin(pu.bob) * 6;   // gentle float
+
+    ctx.save();
+    ctx.translate(pu.x, y);
+
+    // Glow halo so pickups read instantly against any biome.
+    const glow = ctx.createRadialGradient(0, 0, 4, 0, 0, 30);
+    glow.addColorStop(0, "rgba(255,255,255,0.55)");
+    glow.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = glow;
+    ctx.fillRect(-30, -30, 60, 60);
+
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "#000";
+
+    if (pu.type === "magnet") {
+      // Horseshoe magnet: red arc with two grey pole tips.
+      ctx.fillStyle = "#FF5555";
+      ctx.beginPath();
+      ctx.arc(0, 2, 12, Math.PI, 0);
+      ctx.lineTo(12, 10); ctx.lineTo(5, 10); ctx.lineTo(5, 2);
+      ctx.arc(0, 2, 5, 0, Math.PI, true);
+      ctx.lineTo(-5, 10); ctx.lineTo(-12, 10);
+      ctx.closePath();
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle = "#DDDDDD";
+      ctx.fillRect(-12, 10, 7, 6); ctx.strokeRect(-12, 10, 7, 6);
+      ctx.fillRect(5, 10, 7, 6);   ctx.strokeRect(5, 10, 7, 6);
+    } else if (pu.type === "shield") {
+      // Bubble shield.
+      ctx.fillStyle = "rgba(139,233,253,0.85)";
+      ctx.beginPath(); ctx.arc(0, 0, 13, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = "rgba(255,255,255,0.75)";
+      ctx.beginPath(); ctx.arc(-4, -5, 4, 0, Math.PI * 2); ctx.fill();
+    } else {
+      // Feather (wings / double jump).
+      ctx.fillStyle = "#BD93F9";
+      ctx.beginPath();
+      ctx.moveTo(0, -15);
+      ctx.quadraticCurveTo(11, -2, 3, 15);
+      ctx.quadraticCurveTo(-9, -1, 0, -15);
+      ctx.fill(); ctx.stroke();
+      ctx.strokeStyle = "#6B4E9E";
+      ctx.beginPath(); ctx.moveTo(0, -13); ctx.lineTo(3, 13); ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+/* --- Floating score popups ------------------------------------------------ */
+
+function drawPopups() {
+  for (const p of popups) {
+    const t = p.life / p.maxLife;
+    ctx.globalAlpha = Math.min(1, t * 1.8);
+    outlinedText(p.text, p.x, p.y, "bold 20px 'Trebuchet MS', sans-serif", p.color, "center");
+  }
+  ctx.globalAlpha = 1;
+}
+
+/** True when the player is on a touch device, so prompts can say "TAP". */
+function isTouch() {
+  return usingTouch || ("ontouchstart" in window) || navigator.maxTouchPoints > 0;
+}
+
+/* --- HUD -----------------------------------------------------------------
+   Every font size here is chosen for the WORST case: the 800x600 canvas
+   scaled down to a phone screen (~0.5x). Anything under 20px internally
+   becomes unreadable there, so the HUD is deliberately big and sparse.
+   ---------------------------------------------------------------------- */
+
 function drawUI() {
   const meters = Math.floor(distance / 10);
 
-  outlinedText("Distance: " + meters + "m", 18, 40, "bold 24px 'Trebuchet MS', sans-serif", "#FFFFFF");
+  // The death overlay carries its own, fuller version of every stat, so the
+  // live HUD is hidden entirely rather than bleeding through behind it.
+  if (gameOver) { drawGameOver(meters); return; }
 
-  // Small coin icon next to the counter
+  // --- Score (the headline number) ---
+  outlinedText(Math.floor(score).toLocaleString(), 18, 44,
+               "bold 36px 'Trebuchet MS', sans-serif", "#FFFFFF");
+
+  // --- Distance + coins on one compact line ---
+  outlinedText(meters + "m", 20, 76, "bold 23px 'Trebuchet MS', sans-serif", "#E8F6FF");
+
+  const coinLabelX = 20 + ctx.measureText(meters + "m").width + 44;
   ctx.save();
-  ctx.translate(28, 62);
+  ctx.translate(coinLabelX - 17, 69);
   ctx.fillStyle = C.coin;
   ctx.beginPath(); ctx.arc(0, 0, 9, 0, Math.PI * 2); ctx.fill();
   ctx.strokeStyle = "#B8860B"; ctx.lineWidth = 2; ctx.stroke();
   ctx.fillStyle = C.coinShine;
   ctx.beginPath(); ctx.arc(0, 0, 4, 0, Math.PI * 2); ctx.fill();
   ctx.restore();
+  outlinedText(String(coinCount), coinLabelX, 76,
+               "bold 23px 'Trebuchet MS', sans-serif", C.coin);
 
-  outlinedText("Coins: " + coinCount, 44, 70, "bold 20px 'Trebuchet MS', sans-serif", C.coin);
+  // --- Best + rank, top right ---
+  if (save.bestScore > 0) {
+    outlinedText("BEST " + save.bestScore.toLocaleString(), W - 18, 40,
+                 "bold 22px 'Trebuchet MS', sans-serif", "#FFE066", "right");
+  }
+  outlinedText("RANK " + save.rank, W - 18, 68,
+               "bold 20px 'Trebuchet MS', sans-serif", "#B9E6FF", "right");
 
-  if (bestDistance > 0) {
-    outlinedText("Best: " + bestDistance + "m", W - 18, 40,
-                 "bold 20px 'Trebuchet MS', sans-serif", "#FFFFFF", "right");
+  // --- Focus mission: only the one closest to done, to avoid HUD clutter ---
+  drawFocusMission();
+
+  // --- Combo meter, centre top, only while a streak is live ---
+  if (combo > 0 && comboTimer > 0) {
+    const mult = multiplier();
+    const pop = 1 + Math.max(0, (comboTimer - COMBO_WINDOW + 12) / 12) * 0.35;
+    ctx.save();
+    ctx.translate(W / 2, 52);
+    ctx.scale(pop, pop);
+    outlinedText("x" + mult, 0, 0, "bold 34px 'Trebuchet MS', sans-serif", "#FFD700", "center");
+    ctx.restore();
+
+    // Draining bar showing how long the streak has left.
+    const bw = 120, frac = comboTimer / COMBO_WINDOW;
+    ctx.fillStyle = "rgba(0,0,0,0.45)";
+    ctx.fillRect(W / 2 - bw / 2, 62, bw, 8);
+    ctx.fillStyle = frac < 0.3 ? "#FF5555" : "#FFD700";
+    ctx.fillRect(W / 2 - bw / 2, 62, bw * frac, 8);
   }
 
-  // Start prompt before the first jump
-  if (!started && !gameOver) {
-    ctx.fillStyle = "rgba(0,0,0,0.35)";
-    ctx.fillRect(0, 230, W, 120);
-    outlinedText("TURBO DASH", W / 2, 290, "bold 46px 'Trebuchet MS', sans-serif", "#FFE066", "center");
-    outlinedText("Press SPACE to start running!", W / 2, 330,
-                 "bold 22px 'Trebuchet MS', sans-serif", "#FFFFFF", "center");
+  // --- Active power-ups, bottom left ---
+  drawPowerHud();
+
+  // --- Zone banner ---
+  if (zoneBanner > 0 && started && !gameOver) {
+    const a = Math.min(1, zoneBanner / 40);
+    ctx.globalAlpha = a;
+    outlinedText("ZONE " + (Math.floor(distance / ZONE_LENGTH) + 1),
+                 W / 2, 200, "bold 26px 'Trebuchet MS', sans-serif", "#FFFFFF", "center");
+    outlinedText(pal.name, W / 2, 240,
+                 "bold 40px 'Trebuchet MS', sans-serif", "#FFE066", "center");
+    ctx.globalAlpha = 1;
   }
 
-  if (gameOver) drawGameOver(meters);
+  if (!started) drawTitle();
+}
+
+function drawFocusMission() {
+  const open = missions.filter(m => !m.done);
+  if (!open.length) return;
+  // Show whichever open mission is nearest completion - that is the one most
+  // likely to make the player think "one more run".
+  const m = open.reduce((a, b) =>
+    missionProgress(b) / b.target > missionProgress(a) / a.target ? b : a);
+
+  const prog = Math.min(m.target, Math.floor(missionProgress(m)));
+  outlinedText(m.text, W - 18, 98, "bold 19px 'Trebuchet MS', sans-serif", "#FFFFFF", "right", 3.5);
+
+  const bw = 170, frac = prog / m.target;
+  ctx.fillStyle = "rgba(0,0,0,0.45)";
+  ctx.fillRect(W - 18 - bw, 106, bw, 9);
+  ctx.fillStyle = "#50FA7B";
+  ctx.fillRect(W - 18 - bw, 106, bw * frac, 9);
+  outlinedText(prog + "/" + m.target, W - 18, 136,
+               "bold 18px 'Trebuchet MS', sans-serif", "#50FA7B", "right", 3.5);
+}
+
+function drawPowerHud() {
+  const items = [];
+  if (power.shield > 0) items.push({ c: "#8BE9FD", label: "SHIELD", frac: 1 });
+  if (power.magnet > 0) items.push({ c: "#FF79C6", label: "MAGNET", frac: power.magnet / MAGNET_FRAMES });
+  if (power.wings  > 0) items.push({ c: "#BD93F9", label: "WINGS",  frac: power.wings / WINGS_FRAMES });
+
+  let y = H - 24 - (items.length - 1) * 34;
+  for (const it of items) {
+    // Track, then the draining fill, then the label on top in white with a
+    // THIN outline so it reads against both the fill and the empty track.
+    ctx.fillStyle = "rgba(0,0,0,0.6)";
+    ctx.fillRect(18, y - 15, 156, 22);
+    ctx.fillStyle = it.c;
+    ctx.fillRect(20, y - 13, 152 * it.frac, 18);
+    outlinedText(it.label, 28, y + 2,
+                 "bold 16px 'Trebuchet MS', sans-serif", "#FFFFFF", "left", 3);
+    y += 34;
+  }
+}
+
+function drawTitle() {
+  ctx.fillStyle = "rgba(0,0,0,0.45)";
+  ctx.fillRect(0, 200, W, 190);
+  outlinedText("TURBO DASH", W / 2, 265,
+               "bold 54px 'Trebuchet MS', sans-serif", "#FFE066", "center");
+
+  const pulse = 0.7 + Math.sin(elapsed * 5) * 0.3;
+  ctx.globalAlpha = pulse;
+  outlinedText(isTouch() ? "TAP TO START" : "PRESS SPACE TO START",
+               W / 2, 315, "bold 28px 'Trebuchet MS', sans-serif", "#FFFFFF", "center");
+  ctx.globalAlpha = 1;
+
+  outlinedText(isTouch() ? "Hold your finger down to jump higher"
+                         : "Hold the key down to jump higher",
+               W / 2, 358, "bold 20px 'Trebuchet MS', sans-serif", "#B9E6FF", "center");
 }
 
 function drawGameOver(meters) {
-  ctx.fillStyle = "rgba(0,0,0,0.7)";
+  ctx.fillStyle = "rgba(0,0,0,0.74)";
   ctx.fillRect(0, 0, W, H);
 
-  outlinedText("GAME OVER", W / 2, 210, "bold 48px 'Trebuchet MS', sans-serif", "#FF4136", "center");
-  outlinedText("Distance: " + meters + "m", W / 2, 280, "bold 30px 'Trebuchet MS', sans-serif", "#FFFFFF", "center");
-  outlinedText("Coins: " + coinCount,       W / 2, 325, "bold 30px 'Trebuchet MS', sans-serif", C.coin, "center");
+  outlinedText(newRecord ? "NEW RECORD!" : "GAME OVER", W / 2, 92,
+               "bold 46px 'Trebuchet MS', sans-serif",
+               newRecord ? "#50FA7B" : "#FF4136", "center");
 
-  if (meters >= bestDistance && meters > 0) {
-    outlinedText("NEW BEST!", W / 2, 372, "bold 26px 'Trebuchet MS', sans-serif", "#7EC850", "center");
-  } else {
-    outlinedText("Best: " + bestDistance + "m", W / 2, 372, "bold 22px 'Trebuchet MS', sans-serif", "#CCCCCC", "center");
+  outlinedText(Math.floor(score).toLocaleString(), W / 2, 158,
+               "bold 56px 'Trebuchet MS', sans-serif", "#FFFFFF", "center");
+  outlinedText("SCORE", W / 2, 184, "bold 18px 'Trebuchet MS', sans-serif", "#9FB6C9", "center", 3.5);
+
+  outlinedText(meters + "m", W / 2 - 130, 232, "bold 30px 'Trebuchet MS', sans-serif", "#E8F6FF", "center");
+  outlinedText("DISTANCE", W / 2 - 130, 254, "bold 15px 'Trebuchet MS', sans-serif", "#9FB6C9", "center", 3);
+
+  outlinedText(String(coinCount), W / 2, 232, "bold 30px 'Trebuchet MS', sans-serif", C.coin, "center");
+  outlinedText("COINS", W / 2, 254, "bold 15px 'Trebuchet MS', sans-serif", "#9FB6C9", "center", 3);
+
+  outlinedText("x" + stats.runBestMult, W / 2 + 130, 232, "bold 30px 'Trebuchet MS', sans-serif", "#FFD700", "center");
+  outlinedText("BEST COMBO", W / 2 + 130, 254, "bold 15px 'Trebuchet MS', sans-serif", "#9FB6C9", "center", 3);
+
+  // --- Missions: the real hook. Showing "18/20" is what starts the next run.
+  outlinedText("MISSIONS", W / 2, 300, "bold 20px 'Trebuchet MS', sans-serif", "#FFE066", "center");
+  let my = 330;
+  for (const m of missions) {
+    const prog = Math.min(m.target, Math.floor(missionProgress(m)));
+    const col = m.done ? "#50FA7B" : "#FFFFFF";
+    outlinedText((m.done ? "✓ " : "") + m.text, W / 2 - 150, my,
+                 "bold 19px 'Trebuchet MS', sans-serif", col, "left", 3.5);
+    outlinedText(prog + "/" + m.target, W / 2 + 190, my,
+                 "bold 19px 'Trebuchet MS', sans-serif", col, "right", 3.5);
+    my += 30;
+  }
+
+  if (!newRecord && save.bestScore > 0) {
+    outlinedText("Best " + save.bestScore.toLocaleString(), W / 2, 452,
+                 "bold 20px 'Trebuchet MS', sans-serif", "#CCCCCC", "center");
   }
 
   // Gently pulse the restart prompt so it's obviously interactive.
-  const pulse = 0.75 + Math.sin(elapsed * 5) * 0.25;
+  const pulse = 0.7 + Math.sin(elapsed * 5) * 0.3;
   ctx.globalAlpha = pulse;
-  outlinedText("PRESS SPACE TO RESTART", W / 2, 440, "bold 26px 'Trebuchet MS', sans-serif", "#FFFFFF", "center");
+  outlinedText(isTouch() ? "TAP TO RUN AGAIN" : "PRESS SPACE TO RUN AGAIN",
+               W / 2, 512, "bold 30px 'Trebuchet MS', sans-serif", "#FFFFFF", "center");
   ctx.globalAlpha = 1;
 }
 
@@ -1003,37 +1998,74 @@ function drawGameOver(meters) {
 function update(dt) {
   updateRunAnimation(dt);
 
+  // Screen shake decays exponentially - a sharp hit that settles fast.
+  if (shakeAmount > 0) {
+    shakeAmount *= 0.86;
+    if (shakeAmount < 0.3) shakeAmount = 0;
+  }
+
   if (!started || gameOver) {
-    // Idle attract mode: the character still bobs and the clouds still drift.
+    // Idle / death screen: the world is frozen but clouds drift and any
+    // in-flight particles and popups finish their animation.
     for (const cl of clouds) {
       cl.x -= 0.2;
       if (cl.x < -120) { cl.x = W + rand(20, 160); cl.y = rand(40, 200); }
     }
-    particles = particles.filter(p => p.life > 0);
     for (const p of particles) { p.x += p.vx; p.y += p.vy; p.vy += 0.15; p.life--; }
+    for (const p of popups) { p.y += p.vy; p.life--; }
+    particles = particles.filter(p => p.life > 0);
+    popups = popups.filter(p => p.life > 0);
     return;
   }
 
+  // HIT-STOP: freeze the entire simulation for a few frames after a big
+  // impact. It costs nothing and makes the moment land much harder.
+  if (hitStop > 0) { hitStop--; return; }
+
   updatePlayer();
+  updatePowers();
   scrollWorld();
   recycleWorld();
   checkCollisions();
 
+  // Coyote time is refreshed the moment we are grounded and ticks down while
+  // airborne. This runs AFTER collisions because that is what sets `grounded`.
+  if (player.grounded) coyoteFrames = COYOTE_FRAMES;
+  else if (coyoteFrames > 0) coyoteFrames--;
+
+  // Convert any buffered jump press into an actual jump now that we know
+  // whether the player is on the ground this frame.
+  tryJump();
+
   if (!gameOver) {
     distance += scrollSpeed;
-    score = Math.floor(distance / 10) + coinCount * 10;
+    score += scrollSpeed * 0.1;           // distance component of the score
+    stats.runMeters = Math.floor(distance / 10);
     scrollSpeed = targetSpeed();
+    updateBiome();
+    checkMissions();
   }
 }
 
 function render() {
+  ctx.save();
+  // Everything in world space shakes together; the HUD deliberately does not,
+  // so the numbers stay readable during the shake.
+  if (shakeAmount > 0) {
+    ctx.translate(rand(-shakeAmount, shakeAmount), rand(-shakeAmount, shakeAmount));
+  }
+
   drawBackground();
   drawPlatforms();
   drawCoins();
+  drawPowerups();
   drawSpikes();
   drawPlayer();
   drawForeground();
   drawParticles();
+  drawPopups();
+  ctx.restore();
+
   drawUI();
 }
 
@@ -1041,10 +2073,14 @@ function loop(timestamp) {
   // dt is capped so that tabbing away and back doesn't teleport the player.
   const dt = Math.min(timestamp - lastTime || 16, 50);
   lastTime = timestamp;
-  elapsed += dt / 1000;
 
-  update(dt);
-  render();
+  // While backgrounded (phone call, app switch) we keep the RAF alive but
+  // stop simulating, so the player does not come back to a dead run.
+  if (!paused) {
+    elapsed += dt / 1000;
+    update(dt);
+    render();
+  }
 
   requestAnimationFrame(loop);
 }
@@ -1059,6 +2095,8 @@ function restart() {
     y: GROUND_Y - PLAYER_H,
     velocityY: 0,
     isJumping: false,
+    grounded: true,
+    airJumps: 0,
     isAlive: true
   };
 
@@ -1068,18 +2106,34 @@ function restart() {
   score = 0;
   gameOver = false;
   started = false;
+  deathCause = null;
 
   runFrame = 0;  runTimer = 0;
   coinFrame = 0; coinTimer = 0;
   holdFrames = 0; jumpHeld = false;
   squashTimer = 0;
   particles = [];
+  popups = [];
+  powerups = [];
+
+  coyoteFrames = 0; jumpBuffer = 0;
+  combo = 0; comboTimer = 0; airFrames = 0;
+  power = { magnet: 0, shield: 0, wings: 0 };
+  shakeAmount = 0; hitStop = 0; invuln = 0;
+
+  zoneIndex = 0; zoneFade = 0; zoneBanner = 0;
+  updateBiome();
+
+  resetRunStats();
+  rollMissions();
 
   seedWorld();
   seedBackground();
 }
 
+loadSave();
 restart();
+resizeCanvas();
 requestAnimationFrame(loop);
 </script>
 </body>
