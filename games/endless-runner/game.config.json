@@ -1,7 +1,7 @@
 {
   "id": "endless-runner",
   "name": "Turbo Dash",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "A colorful endless runner platformer. Auto-run through four biomes, chain coin combos, skim spikes for close-call bonuses, and chase rotating missions. Built for keyboard and touch.",
   "author": "CaisoGames AI Team",
   "genre": "Endless Runner Platformer",
@@ -96,10 +96,35 @@
     "renderer": "2D Canvas",
     "audioSupport": true,
     "mobileSupport": true,
-    "offlineSupport": true
+    "offlineSupport": true,
+    "requiresJavaScript": true,
+    "knownLimitations": [
+      "Must be opened in a real browser or from a web address. In-app file previews (the sheet with an x and a share button) sandbox the page and block its scripts via CSP, which fires no error and does not trigger <noscript>; the game detects this and shows an explanation instead of a blank canvas."
+    ]
   },
   "credits": {
     "design": "Claude (Design & Code)",
     "code": "Claude (Code Team)"
+  },
+  "testing": {
+    "harness": "games/endless-runner/test (Playwright 1.63.0, pinned)",
+    "run": "npm run setup && npm test",
+    "engines": [
+      "WebKit (Safari engine)",
+      "Chromium"
+    ],
+    "devices": [
+      "iPhone 17 Pro / iOS 26 (portrait + landscape)",
+      "iPhone 16 Pro",
+      "iPhone SE",
+      "Pixel 7",
+      "Desktop 900x760"
+    ],
+    "coverage": [
+      "renders on every target device",
+      "survives blocked localStorage",
+      "survives missing AudioContext",
+      "explains itself when a sandboxed preview blocks its scripts"
+    ]
   }
 }
