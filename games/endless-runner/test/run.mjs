@@ -108,5 +108,104 @@ console.log('\nSandboxed preview (scripts blocked by CSP):');
   await browser.close();
 }
 
+// 5. Evolution: the in-run form progression and its physics.
+console.log('\nEvolution (변신):');
+{
+  const { browser, page } = await open(webkit, TARGETS[0].ctx);
+  const e = await page.evaluate(() => {
+    const o = {};
+    const fall = () => { player.grounded = false; player.isJumping = true; player.velocityY = 6; };
+    const airJump = () => { jumpBuffer = 5; jumpHeld = true; coyoteFrames = 0; tryJump(); };
+
+    restart(); started = true; fall(); player.airJumps = maxAirJumps(); airJump();
+    o.stage1HasNoAirJump = player.velocityY === 6;
+
+    restart(); started = true; evolve();
+    fall(); player.airJumps = maxAirJumps(); airJump();
+    const j1 = player.velocityY;
+    player.velocityY = 6; airJump();
+    o.stage2DoubleJumpOnce = j1 < 0 && player.velocityY === 6;
+    o.airJumpWeakerThanGround = j1 > JUMP_STRENGTH;
+
+    restart(); started = true; evolve(); evolve();
+    fall(); player.airJumps = maxAirJumps(); airJump(); const a = player.velocityY;
+    player.velocityY = 6; airJump(); const c = player.velocityY;
+    player.velocityY = 6; airJump();
+    o.stage3TwoAirJumps = a < 0 && c < 0 && player.velocityY === 6;
+    o.eachAirJumpWeaker = c > a;
+
+    // glide belongs to stage 3 only, and can never gain height
+    restart(); started = true; evolve(); evolve();
+    player.grounded = false; player.velocityY = 9; player.airJumps = 0; jumpHeld = true;
+    updatePlayer();
+    o.glideSlowsFallNeverLifts = gliding && player.velocityY > 0 && player.velocityY <= 3.2;
+    restart(); started = true;
+    player.grounded = false; player.velocityY = 9; player.airJumps = 0; jumpHeld = true;
+    updatePlayer();
+    o.glideIsStage3Only = !gliding;
+
+    // a completed mission drops a reachable core ahead of the player
+    restart(); started = true; cores.length = 0;
+    missions[0].target = 1; stats[missions[0].key] = 99; checkMissions();
+    o.missionDropsCoreAhead = cores.length === 1 && cores[0].x > PLAYER_X;
+
+    // missing it must not destroy the reward
+    cores[0].x = -100; recycleWorld();
+    o.missedCoreIsReoffered = cores.length === 1 && cores[0].x > PLAYER_X;
+
+    // difficulty must track ability, or evolving trivialises the level
+    restart(); scrollSpeed = 8;
+    const r = [Math.round(jumpReach())];
+    evolve(); r.push(Math.round(jumpReach()));
+    evolve(); r.push(Math.round(jumpReach()));
+    o.gapsScaleWithPower = r[2] > r[1] && r[1] > r[0];
+
+    // and the form must not survive death
+    restart(); evolve(); evolve(); restart();
+    o.formResetsEachRun = stage === 0 && cores.length === 0;
+    restart();
+    return o;
+  });
+  for (const [k, v] of Object.entries(e)) ok(v === true, k);
+  await browser.close();
+}
+
+// 6. The generator must never ask for a gap the current form cannot clear.
+//    Reach is MEASURED by replaying the real physics, not estimated.
+console.log('\nGap reachability vs measured physics:');
+{
+  const { browser, page } = await open(webkit, TARGETS[0].ctx);
+  const rows = await page.evaluate(() => {
+    function simulate(airJumps, canGlide, speed) {
+      let y = 0, v = JUMP_STRENGTH, air = airJumps, f = 0;   // no hold: worst case
+      while (f < 400) {
+        if (air > 0 && v > 0 && y > -26) {
+          v = JUMP_STRENGTH * 0.86 * Math.pow(0.82, airJumps - air); air--;
+        }
+        v += v < 0 ? GRAVITY : GRAVITY_FALL;
+        if (v > MAX_FALL_SPEED) v = MAX_FALL_SPEED;
+        y += v; f++;
+        if (y >= 0 && f > 2) break;
+      }
+      return f * speed;
+    }
+    const out = [];
+    for (let st = 0; st < STAGES.length; st++) {
+      stage = st; scrollSpeed = 8; distance = 0;
+      const real = simulate(STAGES[st].airJumps, STAGES[st].glide, 8);
+      const hardest = gapRange()[1];
+      out.push({ name: STAGES[st].name, real: Math.round(real),
+                 hardest: Math.round(hardest), ratio: +(hardest / real).toFixed(2) });
+    }
+    stage = 0;
+    return out;
+  });
+  for (const r of rows) {
+    ok(r.ratio < 0.85, `${r.name}: hardest gap ${r.hardest}px vs ${r.real}px reach`,
+       `ratio ${r.ratio}`);
+  }
+  await browser.close();
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

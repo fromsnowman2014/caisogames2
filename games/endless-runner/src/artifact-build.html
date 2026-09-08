@@ -284,6 +284,7 @@ let coyoteFrames;     // >0 means a jump is still allowed after leaving ground
 let jumpBuffer;       // >0 means a jump was pressed and is waiting to fire
 
 // Combo & skill scoring
+let gliding;          // stage-3 glide is active this frame
 let combo;            // coins collected in the current streak
 let comboTimer;       // frames left before the streak lapses
 let airFrames;        // how long the player has been off the ground
@@ -328,20 +329,34 @@ function tryJump() {
 
   const grounded = player.grounded || coyoteFrames > 0;
 
-  // A grounded jump requires that we are not already rising. An AIR jump (the
-  // WINGS power-up) has no such rule - being able to save a botched jump
-  // mid-fall is the whole point of the pickup.
+  // A grounded jump requires that we are not already rising. An AIR jump has
+  // no such rule - being able to rescue a botched jump mid-fall is the whole
+  // point of having one.
   if (grounded && player.velocityY >= 0) {
     player.velocityY = JUMP_STRENGTH;
     airFrames = 0;
     spawnDust(6, PLAYER_X + PLAYER_W / 2, player.y + PLAYER_H);
     playSfx("jump");
-  } else if (!grounded && power.wings > 0 && player.airJumps > 0) {
+  } else if (!grounded && player.airJumps > 0) {
+    // MULTI-JUMP AND GRAVITY
+    // ----------------------
+    // The air jump SETS velocity rather than adding to it. Adding would make a
+    // jump taken at the top of an arc enormous and one taken while falling
+    // fast useless - the same button would do wildly different things
+    // depending on when you pressed it. Setting it makes every air jump a
+    // reliable, identical recovery, which is what makes the move learnable.
+    //
+    // Each successive jump is weaker than the last, so the third is a nudge
+    // rather than a fourth storey. That keeps the ceiling bounded: even at
+    // stage 3 the player cannot simply fly over the level.
+    const used = maxAirJumps() - player.airJumps;   // 0 for the first air jump
+    const power_ = Math.pow(0.82, used);
     player.airJumps--;
-    player.velocityY = JUMP_STRENGTH * 0.92;
+    player.velocityY = JUMP_STRENGTH * 0.86 * power_;
+    airFrames = 0;
     spawnFeathers(PLAYER_X + PLAYER_W / 2, player.y + PLAYER_H);
-    playSfx("jump");
-    addPopup("DOUBLE!", "#BD93F9");
+    playSfx("airJump");
+    addPopup(used === 0 ? "DOUBLE!" : "TRIPLE!", stageDef().aura);
   } else {
     return;   // nothing we can do with this press
   }
@@ -547,6 +562,10 @@ function playSfx(name) {
     case "mission":tone(660, 0.16, "triangle", 0.18, 990); break;
     case "zone":   tone(523, 0.22, "triangle", 0.16, 784); break;
     case "record": tone(784, 0.30, "square",   0.18, 1568); break;
+    case "airJump":tone(560, 0.13, "triangle", 0.15, 940); break;
+    case "coreDrop":tone(700, 0.20, "triangle", 0.15, 1050); break;
+    // The transformation sting: a long rising sweep, the loudest cue here.
+    case "evolve": tone(330, 0.55, "square",   0.20, 1760); break;
   }
 }
 
@@ -603,7 +622,14 @@ function randInt(min, max)  { return Math.floor(rand(min, max + 1)); }
  * heavier GRAVITY_FALL), and the world slides by at scrollSpeed the whole
  * time, so reach is simply airtime x speed.
  */
-function jumpReach() { return 35 * scrollSpeed; }
+function jumpReach() {
+  // Scaled by the current form's measured reach, so the player's ability and
+  // the level's demands rise together. The multiplier sits slightly under true
+  // parity (~0.92), which leaves an evolved run feeling a little more capable
+  // without letting it become a walkover.
+  const f = (typeof stage === 'number') ? STAGES[stage].reach : 1;
+  return 35 * scrollSpeed * f;
+}
 
 /**
  * Gap sizes are expressed as a FRACTION of jumpReach(), never as absolute
@@ -827,6 +853,119 @@ function seedBackground() {
 }
 
 /* ---------------------------------------------------------------------------
+   4a. EVOLUTION (변신)
+   ----------------------------------------------------------------------------
+   Every run starts at stage 1 and can be evolved twice, by completing missions
+   during the run. Completing one drops an Evolution Core into the world ahead;
+   collecting it transforms the character.
+
+   Why this is built as an in-run arc rather than a permanent unlock:
+
+     * It gives the missions a PHYSICAL payoff. Previously finishing one paid
+       out an abstract +250, which nobody feels. Now it visibly changes what
+       the character can do.
+     * It creates a power curve inside a single run - weak, strong, unstoppable
+       - which is the thing that makes a player keep going rather than stop at
+       a round number.
+     * Because it resets on death, losing a stage-3 run stings. That loss
+       aversion is the strongest restart pressure in the whole design, and it
+       costs nothing to implement: just don't persist it.
+
+   The gaps widen as you evolve (see jumpReach), so the extra jump buys new
+   routes rather than trivialising the old ones.
+   ------------------------------------------------------------------------ */
+
+// reach: how far this form actually travels per jump, relative to RUNNER.
+// These are MEASURED by replaying the real physics frame by frame (see
+// test/reach.mjs), not estimated. An earlier guess of "+45% per air jump"
+// was badly low - the true figures are +83% and +154% - which had the effect
+// of quietly making the game EASIER the stronger you got, since the generator
+// kept sizing gaps for an ability the player had long outgrown.
+const STAGES = [
+  { name: "RUNNER", airJumps: 0, mult: 1.00, glide: false, reach: 1.00,
+    body: "#00CED1", dark: "#00A5A8", back: "#00787A", aura: "#7FFFD4" },
+  { name: "WINGED", airJumps: 1, mult: 1.25, glide: false, reach: 1.68,
+    body: "#BD93F9", dark: "#9A6FE0", back: "#6B4E9E", aura: "#E9D5FF" },
+  { name: "BLAZE",  airJumps: 2, mult: 1.60, glide: true,  reach: 2.34,
+    body: "#FFA726", dark: "#F57C00", back: "#BF5F00", aura: "#FFE0A3" }
+];
+
+let stage;          // index into STAGES - the current form
+let cores;          // Evolution Cores waiting to be collected
+let evolveFlash;    // frames of white-out during a transformation
+let stageBanner;    // frames the "STAGE 2 - WINGED" banner stays up
+let coresEarned;    // cores dropped this run (so the HUD can promise the next)
+
+function stageDef() { return STAGES[stage]; }
+
+/** Total mid-air jumps available: the form's own, plus any from a power-up. */
+function maxAirJumps() {
+  return stageDef().airJumps + (power.wings > 0 ? 1 : 0);
+}
+
+/**
+ * Drop a core ahead of the player, on a platform that has not reached the
+ * screen yet. It is placed high enough to demand a real jump: collecting it
+ * should be a decision with a cost, not something you walk into.
+ */
+function spawnEvolutionCore(reoffer) {
+  if (stage >= STAGES.length - 1) return;   // already fully evolved
+
+  // Prefer a platform comfortably off the right edge so the player sees it
+  // coming and has time to plan the approach.
+  let target = null;
+  for (const p of platforms) {
+    if (p.x > W * 0.9 && p.width > 90) { target = p; break; }
+  }
+  if (!target) target = platforms[platforms.length - 1];
+  if (!target) return;
+
+  cores.push({
+    x: target.x + target.width / 2,
+    y: target.y - 96,               // needs a jump; a run-past will not do
+    taken: false,
+    bob: 0,
+    spin: 0
+  });
+  if (!reoffer) {
+    coresEarned++;
+    addPopup("EVOLUTION CORE AHEAD!", "#FFE066");
+    playSfx("coreDrop");
+  }
+}
+
+/** Collect a core: advance one form, with a full-screen transformation beat. */
+function evolve() {
+  if (stage >= STAGES.length - 1) return;
+  stage++;
+  const s = stageDef();
+
+  // The transformation is the reward, so it gets the biggest feedback in the
+  // game: a white-out, a hard shake, a freeze, and a shower of the new colour.
+  evolveFlash = 22;
+  stageBanner = 170;
+  hitStop = 10;
+  shake(20);
+  playSfx("evolve");
+
+  for (let i = 0; i < 46; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = rand(2, 7);
+    particles.push({
+      x: PLAYER_X + PLAYER_W / 2, y: player.y + PLAYER_H / 2,
+      vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+      life: randInt(24, 48), size: rand(2, 6),
+      color: Math.random() < 0.5 ? s.body : s.aura
+    });
+  }
+
+  // Refill air jumps immediately so the new power is usable this instant -
+  // the moment of transformation should feel like a surge, not a cooldown.
+  player.airJumps = maxAirJumps();
+  addPopup("STAGE " + (stage + 1) + " - " + s.name + "!", s.aura);
+}
+
+/* ---------------------------------------------------------------------------
    4b. POWER-UPS
    ----------------------------------------------------------------------------
    Three pickups, each chosen because it adds a decision rather than just a
@@ -872,6 +1011,8 @@ function updatePowers() {
   if (power.magnet > 0) power.magnet--;
   if (power.wings  > 0) power.wings--;
   if (invuln > 0) invuln--;
+  if (evolveFlash > 0) evolveFlash--;
+  if (stageBanner > 0) stageBanner--;
 
   // Magnet: drag nearby uncollected coins toward the player.
   if (power.magnet > 0) {
@@ -1055,6 +1196,8 @@ function checkMissions() {
       playSfx("mission");
       shake(6);
       persist();
+      // The real reward: a form upgrade waiting on the track ahead.
+      spawnEvolutionCore();
     }
   }
 }
@@ -1128,11 +1271,33 @@ function updatePlayer() {
     holdFrames--;
   }
 
+  // GLIDE (stage 3 only)
+  // --------------------
+  // Once every jump is spent, holding the button feathers the descent instead
+  // of doing nothing. It deliberately cannot gain height - it only buys hang
+  // time - so it extends a committed jump rather than replacing the skill of
+  // aiming one. Mechanically it is the reward for reaching BLAZE: the same
+  // gaps are now crossable with a slower, more deliberate line.
+  gliding = stageDef().glide && jumpHeld && !player.grounded &&
+            player.velocityY > 0 && player.airJumps <= 0;
+
   // Asymmetric gravity: float up, drop fast. See the GRAVITY constants.
-  player.velocityY += player.velocityY < 0 ? GRAVITY : GRAVITY_FALL;
-  if (player.velocityY > MAX_FALL_SPEED) player.velocityY = MAX_FALL_SPEED;
+  const g = player.velocityY < 0 ? GRAVITY : (gliding ? GRAVITY_FALL * 0.30 : GRAVITY_FALL);
+  player.velocityY += g;
+
+  const cap = gliding ? 3.2 : MAX_FALL_SPEED;
+  if (player.velocityY > cap) player.velocityY = cap;
 
   player.y += player.velocityY;
+
+  if (gliding && elapsed * 60 % 4 < 1) {
+    // A thin trail of embers so the glide reads as an ability, not a bug.
+    particles.push({
+      x: PLAYER_X + rand(0, PLAYER_W), y: player.y + PLAYER_H,
+      vx: rand(-0.6, 0.2), vy: rand(0.2, 1.0),
+      life: randInt(10, 20), size: rand(2, 4), color: stageDef().aura
+    });
+  }
 
   if (squashTimer > 0) squashTimer--;
   if (jumpBuffer > 0) jumpBuffer--;
@@ -1167,6 +1332,7 @@ function scrollWorld() {
   for (const c of coins)     c.x -= s;
   for (const sp of spikes)   sp.x -= s;
   for (const pu of powerups) { pu.x -= s; pu.bob += 0.09; }
+  for (const co of cores)    { co.x -= s; co.bob += 0.07; co.spin += 0.11; }
 
   for (const p of popups) { p.x -= s; p.y += p.vy; p.life--; }
 
@@ -1211,6 +1377,13 @@ function recycleWorld() {
   spikes    = spikes.filter(s => s.x + s.size > -40);
   particles = particles.filter(p => p.life > 0);
   powerups  = powerups.filter(p => p.x > -40 && !p.taken);
+  // A core that scrolls past uncollected is NOT thrown away. The player earned
+  // it by finishing a mission; losing it to a single mistimed jump would make
+  // the reward feel arbitrary and punish the exact moment it should celebrate.
+  // It is quietly re-offered further down the track instead.
+  const missedCores = cores.reduce((n, c) => n + (c.x <= -60 && !c.taken ? 1 : 0), 0);
+  cores     = cores.filter(c => c.x > -60 && !c.taken);
+  for (let i = 0; i < missedCores; i++) spawnEvolutionCore(true);
   popups    = popups.filter(p => p.life > 0);
 
   // Keep generating until we have ground well past the right edge.
@@ -1275,8 +1448,8 @@ function checkCollisions() {
     player.isJumping = true;
   } else {
     airFrames = 0;
-    // Landing refills the WINGS mid-air jump.
-    player.airJumps = power.wings > 0 ? 1 : 0;
+    // Landing refills every mid-air jump the current form provides.
+    player.airJumps = maxAirJumps();
   }
 
   // --- Coins ---
@@ -1327,6 +1500,13 @@ function checkCollisions() {
     }
   }
 
+  // --- Evolution cores ---
+  for (const co of cores) {
+    if (co.taken) continue;
+    const dx = cx - co.x, dy = cy - co.y;
+    if (dx * dx + dy * dy < 40 * 40) { co.taken = true; evolve(); }
+  }
+
   // --- Power-ups ---
   for (const pu of powerups) {
     if (pu.taken) continue;
@@ -1370,7 +1550,9 @@ function multiplier() {
   return Math.min(MAX_MULT, 1 + Math.floor(combo / 3));
 }
 
-function addScore(n) { score += n; }
+// Every point earned is scaled by the current form, so evolving early in a
+// run compounds - which is exactly the incentive we want it to create.
+function addScore(n) { score += n * stageDef().mult; }
 
 function addPopup(text, color) {
   popups.push({
@@ -1683,6 +1865,7 @@ function drawSpikes() {
  */
 function drawPlayer() {
   const airborne = player.isJumping;
+  const SD = stageDef();   // the current form supplies the whole palette
 
   // Per-frame pose data: [leftLegDX, leftLegDY, rightLegDX, rightLegDY, tilt]
   // The swing is +/-6 rather than a wider stride because the legs sit only
@@ -1718,12 +1901,12 @@ function drawPlayer() {
 
   // WINGS: little feathers on the character's back while the power-up is live,
   // so the player can see at a glance that a second jump is available.
-  if (power.wings > 0) {
+  if (maxAirJumps() > 0) {
     const flap = Math.sin(elapsed * 18) * 5;
     ctx.save();
     ctx.translate(x + w / 2, y + h / 2);
-    ctx.fillStyle = player.airJumps > 0 ? "#BD93F9" : "#6B4E9E";
-    ctx.strokeStyle = "#3B2A5E";
+    ctx.fillStyle = player.airJumps > 0 ? SD.aura : SD.back;
+    ctx.strokeStyle = "#2A2036";
     ctx.lineWidth = 2;
     for (const dir of [-1, 1]) {
       ctx.beginPath();
@@ -1759,7 +1942,7 @@ function drawPlayer() {
   // A limb swinging backwards is the far-side limb, so it is painted darker.
   // Without that, the near and far legs merge into one shape at full stride.
   const limb = (bx, by, bw, bh, back) => {
-    ctx.fillStyle = back ? C.playerBack : C.playerDark;
+    ctx.fillStyle = back ? SD.back : SD.dark;
     ctx.fillRect(bx, by, bw, bh);
     ctx.strokeRect(bx, by, bw, bh);
   };
@@ -1781,7 +1964,7 @@ function drawPlayer() {
   for (const l of legs) limb(l.x, l.y, legW, legH, l.back);
 
   // --- Body ---
-  ctx.fillStyle = C.player;
+  ctx.fillStyle = SD.body;
   ctx.fillRect(bodyX, 0, bodyW, bodyH);
   ctx.strokeRect(bodyX, 0, bodyW, bodyH);
 
@@ -1943,6 +2126,57 @@ function drawPowerups() {
   }
 }
 
+/* --- Evolution cores -----------------------------------------------------
+   Drawn deliberately larger and brighter than any other pickup, with a halo
+   and an orbiting spark, because it has to read as "the important thing on
+   screen" from across the playfield.
+   ---------------------------------------------------------------------- */
+
+function drawCores() {
+  for (const co of cores) {
+    if (co.taken || co.x < -60 || co.x > W + 60) continue;
+    const next = STAGES[Math.min(STAGES.length - 1, stage + 1)];
+    const y = co.y + Math.sin(co.bob) * 7;
+
+    ctx.save();
+    ctx.translate(co.x, y);
+
+    // Pulsing halo
+    const pulse = 30 + Math.sin(elapsed * 5) * 5;
+    const glow = ctx.createRadialGradient(0, 0, 4, 0, 0, pulse);
+    glow.addColorStop(0, "rgba(255,255,255,0.85)");
+    glow.addColorStop(0.45, next.body + "AA");
+    glow.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = glow;
+    ctx.fillRect(-pulse, -pulse, pulse * 2, pulse * 2);
+
+    // A faceted gem in the colour of the form it grants, so the reward is
+    // legible before you reach it.
+    ctx.rotate(co.spin);
+    ctx.fillStyle = next.body;
+    ctx.strokeStyle = "#1a1a1a";
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(0, -17); ctx.lineTo(14, 0); ctx.lineTo(0, 17); ctx.lineTo(-14, 0);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+
+    ctx.fillStyle = "rgba(255,255,255,0.75)";
+    ctx.beginPath();
+    ctx.moveTo(0, -17); ctx.lineTo(7, 0); ctx.lineTo(0, 6); ctx.lineTo(-7, 0);
+    ctx.closePath();
+    ctx.fill();
+
+    // Orbiting spark
+    ctx.rotate(-co.spin * 2.4);
+    ctx.fillStyle = "#FFFFFF";
+    ctx.beginPath();
+    ctx.arc(23, 0, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
 /* --- Floating score popups ------------------------------------------------ */
 
 function drawPopups() {
@@ -2020,8 +2254,25 @@ function drawUI() {
     ctx.fillRect(W / 2 - bw / 2, 62, bw * frac, 8);
   }
 
+  // --- Current form, bottom left above the power-up bars ---
+  drawStageHud();
+
   // --- Active power-ups, bottom left ---
   drawPowerHud();
+
+  // --- Transformation banner ---
+  if (stageBanner > 0) {
+    const a = Math.min(1, stageBanner / 45);
+    ctx.globalAlpha = a;
+    outlinedText("STAGE " + (stage + 1), W / 2, 150,
+                 "bold 28px 'Trebuchet MS', sans-serif", "#FFFFFF", "center");
+    outlinedText(stageDef().name, W / 2, 200,
+                 "bold 52px 'Trebuchet MS', sans-serif", stageDef().aura, "center");
+    outlinedText(stage === 1 ? "DOUBLE JUMP UNLOCKED"
+                             : "TRIPLE JUMP + HOLD TO GLIDE",
+                 W / 2, 236, "bold 21px 'Trebuchet MS', sans-serif", "#FFFFFF", "center");
+    ctx.globalAlpha = 1;
+  }
 
   // --- Zone banner ---
   if (zoneBanner > 0 && started && !gameOver) {
@@ -2057,13 +2308,36 @@ function drawFocusMission() {
                "bold 18px 'Trebuchet MS', sans-serif", "#50FA7B", "right", 3.5);
 }
 
+/**
+ * A compact readout of the current form and what it grants. It sits above the
+ * power-up bars and always shows the NEXT form as a promise, because an
+ * unreached upgrade the player can see is worth more than one they cannot.
+ */
+function drawStageHud() {
+  const SD = stageDef();
+  const jumps = 1 + maxAirJumps();
+  const label = SD.name + "  " + jumps + "x JUMP" + (SD.glide ? " + GLIDE" : "");
+
+  ctx.fillStyle = "rgba(0,0,0,0.55)";
+  ctx.fillRect(18, H - 92, 236, 26);
+  ctx.fillStyle = SD.body;
+  ctx.fillRect(18, H - 92, 6, 26);
+  outlinedText(label, 32, H - 73,
+               "bold 16px 'Trebuchet MS', sans-serif", SD.aura, "left", 3);
+
+  if (stage < STAGES.length - 1) {
+    outlinedText("Finish a mission to evolve", 32, H - 52,
+                 "bold 14px 'Trebuchet MS', sans-serif", "#9FB6C9", "left", 3);
+  }
+}
+
 function drawPowerHud() {
   const items = [];
   if (power.shield > 0) items.push({ c: "#8BE9FD", label: "SHIELD", frac: 1 });
   if (power.magnet > 0) items.push({ c: "#FF79C6", label: "MAGNET", frac: power.magnet / MAGNET_FRAMES });
   if (power.wings  > 0) items.push({ c: "#BD93F9", label: "WINGS",  frac: power.wings / WINGS_FRAMES });
 
-  let y = H - 24 - (items.length - 1) * 34;
+  let y = H - 26 - (items.length - 1) * 34;
   for (const it of items) {
     // Track, then the draining fill, then the label on top in white with a
     // THIN outline so it reads against both the fill and the empty track.
@@ -2198,7 +2472,7 @@ function update(dt) {
 
   if (!gameOver) {
     distance += scrollSpeed;
-    score += scrollSpeed * 0.1;           // distance component of the score
+    score += scrollSpeed * 0.1 * stageDef().mult;   // distance component
     stats.runMeters = Math.floor(distance / 10);
     scrollSpeed = targetSpeed();
     updateBiome();
@@ -2228,6 +2502,7 @@ function render() {
   drawPlatforms();
   drawCoins();
   drawPowerups();
+  drawCores();
   drawSpikes();
   drawPlayer();
   drawForeground();
@@ -2235,6 +2510,15 @@ function render() {
   drawSpeedLines();
   drawPopups();
   ctx.restore();
+
+  // Transformation white-out. Drawn over the world but under the HUD so the
+  // score stays readable through the flash.
+  if (evolveFlash > 0) {
+    ctx.globalAlpha = Math.min(0.85, evolveFlash / 22);
+    ctx.fillStyle = stageDef().aura;
+    ctx.fillRect(0, 0, W, H);
+    ctx.globalAlpha = 1;
+  }
 
   drawUI();
 }
@@ -2291,6 +2575,8 @@ function restart() {
   shakeAmount = 0; hitStop = 0; invuln = 0;
 
   beatBest = false;
+  stage = 0; cores = []; evolveFlash = 0; stageBanner = 0; coresEarned = 0;
+  gliding = false;
   zoneIndex = 0; zoneFade = 0; zoneBanner = 0;
   updateBiome();
 

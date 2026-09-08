@@ -1,8 +1,8 @@
 {
   "id": "endless-runner",
   "name": "Turbo Dash",
-  "version": "2.1.0",
-  "description": "A colorful endless runner platformer. Auto-run through four biomes, chain coin combos, skim spikes for close-call bonuses, and chase rotating missions. Built for keyboard and touch.",
+  "version": "3.0.0",
+  "description": "A colorful endless runner platformer. Complete missions mid-run to collect Evolution Cores and transform: unlock the double jump, then the triple jump and glide. Chain coin combos across four biomes. Keyboard and touch.",
   "author": "CaisoGames AI Team",
   "genre": "Endless Runner Platformer",
   "tags": [
@@ -27,18 +27,22 @@
     }
   },
   "features": [
-    "4-frame run cycle with mirrored stride and vertical bob",
+    "Three-stage in-run evolution: RUNNER -> WINGED (double jump) -> BLAZE (triple jump + glide)",
+    "Evolution Cores earned by completing missions, collected on the track ahead",
+    "Air jumps set velocity rather than adding it, so every one is a reliable recovery",
+    "Each successive air jump is weaker, keeping the height ceiling bounded",
+    "Gap sizes scale with each form's MEASURED reach, so evolving never trivialises the level",
+    "Stage score multipliers (x1.0 / x1.25 / x1.6) reward evolving early",
+    "Form resets on death - losing a BLAZE run is the strongest restart pressure in the game",
     "Coyote time and jump buffering so deaths always feel earned",
     "Coin combo multiplier up to x8, plus close-call and big-air bonuses",
     "Three rotating missions per run with per-mission difficulty tiers",
     "Persistent records, rank and lifetime coins via localStorage",
-    "Three power-ups: magnet, shield, and wings (mid-air double jump)",
+    "Power-ups: magnet, shield, and a temporary extra air jump",
     "Four crossfading biomes: Meadow, Sunset Ridge, Midnight, Frost Peaks",
-    "Gap sizes scale with jump reach, so difficulty ramps in the right direction",
-    "Difficulty rhythm: pressure and breather waves rather than a straight climb",
     "Screen shake, hit-stop, speed lines and WebAudio sound with no asset files",
     "Full touch support with multi-finger hold tracking and iOS audio unlock",
-    "Responsive letterboxed canvas, safe-area insets, pause on backgrounding"
+    "Boot screen that explains itself if a sandboxed viewer blocks its scripts"
   ],
   "stats": {
     "playtime": "1-5 minutes per run",
@@ -48,18 +52,20 @@
   "mechanics": {
     "primary": [
       "Auto-running character",
-      "Jump physics with coyote time and jump buffering"
+      "Multi-jump physics with coyote time and jump buffering",
+      "Mission-driven evolution"
     ],
     "secondary": [
       "Coin combo chaining",
       "Spike near-misses",
       "Power-up collection",
-      "Mission completion"
+      "Stage-3 gliding"
     ],
     "unique": [
-      "Gaps sized as a fraction of measured jump reach, not fixed pixels",
-      "Difficulty breathes on a long wave instead of climbing monotonically",
-      "Mid-run record-break celebration while the player still has something to lose"
+      "Missions pay out a visible ability rather than an abstract score bonus",
+      "A power curve inside a single run: weak, strong, unstoppable",
+      "Form is lost on death, so loss aversion drives the restart",
+      "Gaps sized from each form's measured physics, not an estimate"
     ]
   },
   "difficulty": {
@@ -124,7 +130,37 @@
       "renders on every target device",
       "survives blocked localStorage",
       "survives missing AudioContext",
-      "explains itself when a sandboxed preview blocks its scripts"
-    ]
+      "explains itself when a sandboxed preview blocks its scripts",
+      "evolution stages, air-jump physics and glide",
+      "a missed Evolution Core is re-offered rather than lost",
+      "hardest generated gap stays well inside each form's measured reach"
+    ],
+    "checks": 26
+  },
+  "progression": {
+    "type": "in-run evolution",
+    "stages": [
+      {
+        "stage": 1,
+        "name": "RUNNER",
+        "grants": "Single jump",
+        "scoreMultiplier": 1.0
+      },
+      {
+        "stage": 2,
+        "name": "WINGED",
+        "grants": "Double jump",
+        "scoreMultiplier": 1.25,
+        "earnedBy": "Complete one mission during the run, then collect the Evolution Core"
+      },
+      {
+        "stage": 3,
+        "name": "BLAZE",
+        "grants": "Triple jump + hold to glide",
+        "scoreMultiplier": 1.6,
+        "earnedBy": "Complete a second mission, then collect the next Core"
+      }
+    ],
+    "note": "Evolution is per-run and resets on death. Mission difficulty tiers persist, so cores get harder to earn over time."
   }
 }
