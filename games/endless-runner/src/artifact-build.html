@@ -1,15 +1,4 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<!-- viewport-fit=cover + user-scalable=no: fills the notch area on iPhone and
-     stops double-tap zoom and pinch-zoom from fighting the touch controls. -->
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="theme-color" content="#1b2b3a">
-<title>Turbo Dash - Endless Runner</title>
+<title>Turbo Dash</title>
 <style>
   html, body {
     margin: 0;
@@ -116,8 +105,6 @@
   /* On short/landscape phone screens the hint just steals room from the game. */
   @media (max-height: 480px) { #hint { display: none; } }
 </style>
-</head>
-<body>
 <div id="wrap">
   <canvas id="game" width="800" height="600"></canvas>
   <div id="hint">SPACE / UP / W or TAP to jump &mdash; hold longer to jump higher</div>
@@ -200,7 +187,6 @@
    the run cycle animation, the platform generator, and the parallax scroll.
    ========================================================================== */
 
-
 /* ---------------------------------------------------------------------------
    1. CONSTANTS & CONFIGURATION
    ------------------------------------------------------------------------ */
@@ -272,7 +258,6 @@ const C = {
   skyBottom:   "#FFFACD"
 };
 
-
 /* ---------------------------------------------------------------------------
    2. GAME STATE
    Everything that changes during play lives here so restart() can reset it
@@ -299,7 +284,6 @@ let jumpBuffer;       // >0 means a jump was pressed and is waiting to fire
 let combo;            // coins collected in the current streak
 let comboTimer;       // frames left before the streak lapses
 let airFrames;        // how long the player has been off the ground
-
 
 /* ---------------------------------------------------------------------------
    3. INPUT HANDLING
@@ -501,7 +485,6 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden) lastTime = performance.now();
 });
 
-
 /* ---------------------------------------------------------------------------
    3b. AUDIO
    ----------------------------------------------------------------------------
@@ -563,7 +546,6 @@ function playSfx(name) {
     case "record": tone(784, 0.30, "square",   0.18, 1568); break;
   }
 }
-
 
 /* ---------------------------------------------------------------------------
    4. WORLD GENERATION
@@ -841,7 +823,6 @@ function seedBackground() {
   }
 }
 
-
 /* ---------------------------------------------------------------------------
    4b. POWER-UPS
    ----------------------------------------------------------------------------
@@ -904,7 +885,6 @@ function updatePowers() {
     }
   }
 }
-
 
 /* ---------------------------------------------------------------------------
    4c. BIOMES
@@ -992,7 +972,6 @@ function updateBiome() {
   pal.starAlpha = (cur.stars ? t : 0) + (prev.stars ? 1 - t : 0);
   pal.name = cur.name;
 }
-
 
 /* ---------------------------------------------------------------------------
    4d. MISSIONS, RECORDS & PROGRESSION
@@ -1102,7 +1081,6 @@ function finishRun() {
 
 let newRecord = false;
 let beatBest = false;   // has this run already passed the stored best?
-
 
 /* ---------------------------------------------------------------------------
    5. UPDATE LOGIC
@@ -1475,7 +1453,6 @@ function spawnSparkle(x, y) {
     });
   }
 }
-
 
 /* ---------------------------------------------------------------------------
    6. DRAWING
@@ -2161,7 +2138,6 @@ function drawGameOver(meters) {
   ctx.globalAlpha = 1;
 }
 
-
 /* ---------------------------------------------------------------------------
    7. THE MAIN LOOP
    ----------------------------------------------------------------------------
@@ -2276,7 +2252,6 @@ function loop(timestamp) {
   requestAnimationFrame(loop);
 }
 
-
 /* ---------------------------------------------------------------------------
    INIT / RESTART
    ------------------------------------------------------------------------ */
@@ -2364,5 +2339,3 @@ function boot() {
 
 boot();
 </script>
-</body>
-</html>
