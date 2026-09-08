@@ -499,10 +499,23 @@ function jumpReach() { return 35 * scrollSpeed; }
  * shrinking reaction time as the world speeds up, plus the gentle tightening
  * below.
  */
+/**
+ * Difficulty BREATHES rather than climbing in a straight line. A constant
+ * grind numbs the player; alternating pressure with short breathers keeps
+ * attention, and makes the hard stretches read as hard because there is
+ * something easier to contrast them against.
+ *
+ * Returns roughly 0.72 .. 1.0, on a long wavelength (~1600m per cycle).
+ */
+function intensity() {
+  return 0.86 + 0.14 * Math.sin(distance / 2600);
+}
+
 function gapRange() {
   const reach = jumpReach();
   const tighten = Math.min(0.10, distance / 90000);  // creeps up as you survive
-  return [reach * (0.34 + tighten), reach * (0.52 + tighten * 1.4)];
+  const wave = intensity();
+  return [reach * (0.34 + tighten) * wave, reach * (0.52 + tighten * 1.4) * wave];
 }
 
 function spikeChance() {
@@ -670,6 +683,13 @@ function seedBackground() {
     });
   }
 
+  // Speed lines: pre-seeded so they scroll smoothly instead of flickering
+  // to new random positions every frame.
+  speedLines = [];
+  for (let i = 0; i < 18; i++) {
+    speedLines.push({ x: rand(0, W), y: rand(60, H - 60), len: rand(30, 90) });
+  }
+
   // Stars sit behind everything and only become visible in night zones.
   stars = [];
   for (let i = 0; i < 60; i++) {
@@ -800,6 +820,7 @@ let pal;            // the palette actually painted this frame
 let zoneIndex;      // which biome we are in
 let zoneFade;       // frames left in the current crossfade
 let stars;          // star field, only visible in night zones
+let speedLines;     // horizontal streaks that appear at high scroll speed
 let zoneBanner;     // frames left showing the "ZONE 2 - MIDNIGHT" banner
 
 function hexToRgb(h) {
@@ -948,6 +969,7 @@ function finishRun() {
 }
 
 let newRecord = false;
+let beatBest = false;   // has this run already passed the stored best?
 
 
 /* ---------------------------------------------------------------------------
@@ -1034,6 +1056,11 @@ function scrollWorld() {
   for (const pu of powerups) { pu.x -= s; pu.bob += 0.09; }
 
   for (const p of popups) { p.x -= s; p.y += p.vy; p.life--; }
+
+  for (const sl of speedLines) {
+    sl.x -= s * 2.4;                      // deliberately faster than the world
+    if (sl.x + sl.len < 0) { sl.x = W + rand(0, 120); sl.y = rand(60, H - 60); }
+  }
 
   for (const st of stars) {
     st.x -= s * 0.08;                     // stars are effectively at infinity
@@ -1704,6 +1731,27 @@ function drawForeground() {
   }
 }
 
+/**
+ * Horizontal streaks that fade in as the world speeds up. Pure feedback: the
+ * scroll speed is already visible in the platforms, but at 8+ px/frame the
+ * player needs to FEEL the speed, not just infer it.
+ */
+function drawSpeedLines() {
+  if (!started || gameOver || scrollSpeed < 7) return;
+  const strength = Math.min(1, (scrollSpeed - 7) / 3);
+  ctx.globalAlpha = strength * 0.32;
+  ctx.strokeStyle = "#FFFFFF";
+  ctx.lineWidth = 2;
+  ctx.lineCap = "round";
+  for (const sl of speedLines) {
+    ctx.beginPath();
+    ctx.moveTo(sl.x, sl.y);
+    ctx.lineTo(sl.x + sl.len * strength, sl.y);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+
 function drawParticles() {
   for (const p of particles) {
     ctx.globalAlpha = Math.max(0, p.life / 26);
@@ -2044,6 +2092,16 @@ function update(dt) {
     scrollSpeed = targetSpeed();
     updateBiome();
     checkMissions();
+
+    // Crossing your own record MID-RUN, while you still have something to
+    // lose, is the most charged moment the game has. Mark it loudly.
+    if (!beatBest && save.bestScore > 0 && score > save.bestScore) {
+      beatBest = true;
+      addPopup("NEW BEST!", "#50FA7B");
+      playSfx("record");
+      shake(9);
+      spawnSparkle(PLAYER_X + PLAYER_W / 2, player.y + PLAYER_H / 2);
+    }
   }
 }
 
@@ -2063,6 +2121,7 @@ function render() {
   drawPlayer();
   drawForeground();
   drawParticles();
+  drawSpeedLines();
   drawPopups();
   ctx.restore();
 
@@ -2121,6 +2180,7 @@ function restart() {
   power = { magnet: 0, shield: 0, wings: 0 };
   shakeAmount = 0; hitStop = 0; invuln = 0;
 
+  beatBest = false;
   zoneIndex = 0; zoneFade = 0; zoneBanner = 0;
   updateBiome();
 
