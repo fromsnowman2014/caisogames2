@@ -1,7 +1,7 @@
 {
   "id": "endless-runner",
   "name": "Turbo Dash",
-  "version": "4.0.0",
+  "version": "4.1.0",
   "description": "A colorful endless runner platformer. Evolve mid-run to unlock the double jump and glide, spend coins in the shop on hats, packs and trails, and chase a live shared leaderboard. Keyboard and touch.",
   "author": "CaisoGames AI Team",
   "genre": "Endless Runner Platformer",
@@ -114,7 +114,8 @@
     "offlineSupport": true,
     "requiresJavaScript": true,
     "knownLimitations": [
-      "Must be opened in a real browser or from a web address. In-app file previews (the sheet with an x and a share button) sandbox the page and block its scripts via CSP, which fires no error and does not trigger <noscript>; the game detects this and shows an explanation instead of a blank canvas."
+      "Must be opened in a real browser or from a web address. In-app file previews (the sheet with an x and a share button) sandbox the page and block its scripts via CSP, which fires no error and does not trigger <noscript>; the game detects this and shows an explanation instead of a blank canvas.",
+      "Leaderboard identity is a per-browser id with a self-declared name. There is no verified user identity available to the page, so it is a friendly board rather than an anti-cheat system."
     ]
   },
   "credits": {
@@ -148,9 +149,15 @@
       "coin bonus reaches the wallet but never the score",
       "menus pause the run instead of letting it play on unseen",
       "cloud leaderboard subscribes, submits one row, and sanitises other viewers' data",
-      "the game is complete with no cloud at all"
+      "the game is complete with no cloud at all",
+      "tapping the name field is NOT preventDefault-ed (the bug that made it untypable)",
+      "the game surface still cancels touches, so the page cannot scroll or zoom",
+      "W and SPACE reach the name field while the prompt is open, and jump again once it closes",
+      "focus happens synchronously inside the gesture, which is what raises the iOS keyboard",
+      "typing a real name through the browser's own input pipeline, on touch and mouse",
+      "a player outside the visible rows still has a findable, pinned rank"
     ],
-    "checks": 42
+    "checks": 55
   },
   "progression": {
     "type": "in-run evolution",

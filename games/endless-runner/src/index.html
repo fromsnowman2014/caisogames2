@@ -120,6 +120,18 @@
     box-sizing: border-box;
   }
   #nameModal.show { display: flex; }
+  /* When the on-screen keyboard is up there is very little height left, and a
+     vertically centred card ends up underneath it. On short viewports the
+     dialog hugs the top and sheds its explanatory text so the field itself
+     stays visible above the keyboard. */
+  @media (max-height: 520px) {
+    #nameModal { align-items: flex-start; padding-top: 8px; }
+    #nameCard { padding: 14px; }
+    #nameCard h2 { font-size: 18px; margin-bottom: 2px; }
+    #nameCard p:not(#nameHint) { display: none; }
+    #nameHint { display: none; }
+    #nameRow button { min-height: 42px; padding: 9px 10px; }
+  }
   #nameCard {
     width: 100%;
     max-width: 380px;
@@ -465,10 +477,12 @@ function tryJump() {
 
 window.addEventListener("keydown", e => {
   if (e.code === "Escape" && uiScreen !== "play") { closeMenu(); return; }
+  // Bail BEFORE preventDefault: W and SPACE are jump keys but also ordinary
+  // characters, and swallowing them here made them untypable in the name box.
+  if (nameModalOpen || uiScreen !== "play") return;
   if (e.code === "Space" || e.code === "ArrowUp" || e.code === "KeyW") {
     e.preventDefault();
     unlockAudio();
-    if (nameModalOpen || uiScreen !== "play") return;   // menus own the input
     if (!e.repeat) pressJump();
   }
 });
@@ -496,7 +510,26 @@ window.addEventListener("keyup", e => {
 let activeTouches = 0;
 let usingTouch = false;   // once true, ignore mouse events (they are synthetic)
 
+/**
+ * True when an event landed on real HTML UI (the name prompt) rather than on
+ * the game surface.
+ *
+ * This check is why the name field is typable at all. The game calls
+ * preventDefault() on every touch to stop iOS scrolling and zooming - but
+ * preventDefault() on touchstart ALSO cancels the tap's default action, and
+ * focusing an input IS that default action. Swallowing it meant tapping the
+ * name box did nothing and the keyboard never appeared. Real HTML controls
+ * must be allowed to behave like real HTML controls.
+ */
+function onHtmlUi(target) {
+  const m = document.getElementById("nameModal");
+  return !!(m && target && m.contains(target));
+}
+
 function onTouchStart(e) {
+  // Never interfere with a tap aimed at the name prompt.
+  if (onHtmlUi(e.target)) return;
+
   usingTouch = true;
   activeTouches += e.changedTouches.length;
   e.preventDefault();
@@ -508,6 +541,7 @@ function onTouchStart(e) {
 }
 
 function onTouchEnd(e) {
+  if (onHtmlUi(e.target)) return;
   activeTouches = Math.max(0, activeTouches - e.changedTouches.length);
   e.preventDefault();
   if (activeTouches === 0) releaseJump();   // only release on the LAST finger
@@ -524,13 +558,19 @@ document.addEventListener("dblclick",     e => e.preventDefault());
 /* --- Mouse (desktop only) ------------------------------------------------ */
 
 document.addEventListener("mousedown", e => {
+  // Same rule as touch: preventDefault() on mousedown cancels focus, so the
+  // name field would be unclickable.
+  if (onHtmlUi(e.target)) return;
   if (usingTouch) return;
   unlockAudio();
   if (routePress(e.clientX, e.clientY)) { e.preventDefault(); return; }
   e.preventDefault();
   pressJump();
 });
-document.addEventListener("mouseup", () => { if (!usingTouch) releaseJump(); });
+document.addEventListener("mouseup", e => {
+  if (onHtmlUi(e.target)) return;
+  if (!usingTouch) releaseJump();
+});
 
 /* --- Responsive canvas ---------------------------------------------------
    The game always renders at a fixed 800x600 internally, so no gameplay code
@@ -2637,9 +2677,20 @@ function openNameModal() {
   releaseJump();                 // don't leave a jump held under the modal
   input.value = save.name || "";
   modal.classList.add("show");
-  // A phone will not raise its keyboard unless the field is focused, but
-  // focusing during the same tap that opened the modal is unreliable on iOS.
-  setTimeout(() => { try { input.focus(); input.select(); } catch (e) {} }, 60);
+
+  // iOS raises the on-screen keyboard ONLY for a focus() that happens
+  // synchronously inside the user gesture. Deferring it to a timeout - as this
+  // did - focuses the field silently with no keyboard, which looks exactly
+  // like a broken text box. Focus now, and keep a deferred retry only as a
+  // fallback for engines that need the element laid out first.
+  try { input.focus(); input.select(); } catch (e) {}
+  setTimeout(() => {
+    if (nameModalOpen && document.activeElement !== input) {
+      try { input.focus(); input.select(); } catch (e) {}
+    }
+    // Once the keyboard has animated in, make sure the field is not behind it.
+    try { input.scrollIntoView({ block: "center" }); } catch (e) {}
+  }, 80);
 }
 
 function closeNameModal(saveIt) {
@@ -2863,8 +2914,17 @@ function drawBoard() {
   else { status = "Offline copy - showing your own best only"; statusColor = "#9FB6C9"; }
   outlinedText(status, 26, 78, "bold 15px 'Trebuchet MS', sans-serif", statusColor, "left", 3);
 
-  const rows = cloudState === "ready" ? boardRows : localBoardRows();
-  const top = 104, rowH = 36, maxRows = 11;
+  const all = cloudState === "ready" ? boardRows : localBoardRows();
+  // 11 rows, not 12: the pinned row sits one slot below the list and must
+  // clear the BACK / CHANGE NAME buttons along the bottom edge.
+  const top = 104, rowH = 33, maxRows = 11;
+
+  // If the player is outside the visible slice, their own row is pinned to the
+  // bottom with its true rank. A leaderboard that cannot show you where YOU
+  // are is only half a leaderboard.
+  const myIdx = all.findIndex(r => r.id === save.clientId);
+  const rows = all.slice(0, maxRows);
+  const pinned = (myIdx >= maxRows) ? all[myIdx] : null;
 
   outlinedText("#", 40, top, "bold 15px 'Trebuchet MS', sans-serif", "#7d94a8", "center", 3);
   outlinedText("NAME", 70, top, "bold 15px 'Trebuchet MS', sans-serif", "#7d94a8", "left", 3);
@@ -2877,7 +2937,7 @@ function drawBoard() {
                  W / 2, 200, "bold 20px 'Trebuchet MS', sans-serif", "#9FB6C9", "center", 3);
   }
 
-  rows.slice(0, maxRows).forEach((r, i) => {
+  const drawRow = (r, i, rank) => {
     const y = top + 24 + i * rowH;
     const mine = r.id === save.clientId;
     if (mine) {
@@ -2885,8 +2945,8 @@ function drawBoard() {
       ctx.fillRect(26, y - 20, W - 52, rowH - 4);
       ctx.fillStyle = "#7FD4E6"; ctx.fillRect(26, y - 20, 4, rowH - 4);
     }
-    const medal = ["#FFD700", "#C8D4DC", "#CD7F32"][i] || "#9FB6C9";
-    outlinedText(String(i + 1), 44, y, "bold 18px 'Trebuchet MS', sans-serif", medal, "center", 3);
+    const medal = ["#FFD700", "#C8D4DC", "#CD7F32"][rank - 1] || "#9FB6C9";
+    outlinedText(String(rank), 44, y, "bold 18px 'Trebuchet MS', sans-serif", medal, "center", 3);
     outlinedText(r.name + (mine ? "  (you)" : ""), 70, y,
                  "bold 18px 'Trebuchet MS', sans-serif", mine ? "#FFFFFF" : "#DCE8F1", "left", 3);
     outlinedText(r.score.toLocaleString(), W - 210, y,
@@ -2895,13 +2955,26 @@ function drawBoard() {
                  "bold 17px 'Trebuchet MS', sans-serif", "#B9E6FF", "right", 3);
     outlinedText(r.stage || "-", W - 30, y,
                  "bold 15px 'Trebuchet MS', sans-serif", "#9FB6C9", "right", 3);
-  });
+  };
+
+  rows.forEach((r, i) => drawRow(r, i, i + 1));
+  if (pinned) {
+    // A visual break, so the pinned row is not mistaken for rank 13.
+    ctx.fillStyle = "#3d5164";
+    ctx.fillRect(26, top + 24 + maxRows * rowH - 14, W - 52, 1);
+    drawRow(pinned, maxRows + 0.35, myIdx + 1);
+  }
 
   const rank = myBoardRank();
-  if (cloudState === "ready" && rank < 0 && save.bestScore > 0) {
+  if (cloudState === "ready" && !save.name) {
+    // Nothing is ever posted without a name, so say so rather than leaving the
+    // player wondering why they never appear.
+    outlinedText("Set a name to appear on the board.",
+                 W / 2, H - 78, "bold 16px 'Trebuchet MS', sans-serif", "#FFE066", "center", 3);
+  } else if (cloudState === "ready" && rank < 0 && save.bestScore > 0) {
     outlinedText("Your best " + Math.floor(save.bestScore).toLocaleString() +
                  " is not in the top " + BOARD_LIMIT + " yet.",
-                 W / 2, H - 84, "bold 16px 'Trebuchet MS', sans-serif", "#9FB6C9", "center", 3);
+                 W / 2, H - 78, "bold 16px 'Trebuchet MS', sans-serif", "#9FB6C9", "center", 3);
   }
 
   uiBtn(26, H - 62, 150, 46, "BACK", closeMenu, { font: 20 });

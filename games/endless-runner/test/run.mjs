@@ -321,5 +321,126 @@ console.log('\nCloud leaderboard:');
   await b2.close();
 }
 
+// 9. NAME ENTRY. This exists because the name box was untypable in the real
+//    world while every emulated test passed: synthetic taps focus an input
+//    regardless, but a real device obeys preventDefault(). So assert on
+//    defaultPrevented, which is the thing the device actually honours.
+console.log('\nName entry (regression guards):');
+{
+  const { browser, page } = await open(webkit, TARGETS[0].ctx);
+  const r = await page.evaluate(() => {
+    const o = {};
+    openBoard(); openNameModal();
+
+    // iOS raises its keyboard only for a focus() made synchronously inside the
+    // gesture; a deferred one focuses silently and looks like a dead box.
+    o.focusHappensSynchronously =
+      document.activeElement && document.activeElement.id === 'nameInput';
+
+    const input = document.getElementById('nameInput');
+    const cv = document.getElementById('game');
+    const touch = (el) => {
+      const ev = new Event('touchstart', { bubbles: true, cancelable: true });
+      Object.defineProperty(ev, 'changedTouches', { value: [{ clientX: 10, clientY: 10 }] });
+      el.dispatchEvent(ev);
+      return ev.defaultPrevented;
+    };
+    // Cancelling the tap on the field is exactly what broke typing.
+    o.tapOnNameFieldIsNotCancelled = touch(input) === false;
+    // ...while the game surface must still cancel, or the page scrolls.
+    o.tapOnGameIsStillCancelled = touch(cv) === true;
+
+    const key = (code, k) => {
+      const ev = new KeyboardEvent('keydown', { code, key: k, bubbles: true, cancelable: true });
+      window.dispatchEvent(ev);
+      return ev.defaultPrevented;
+    };
+    // W and SPACE are jump keys AND ordinary characters.
+    o.spaceReachesTheNameField = key('Space', ' ') === false;
+    o.wReachesTheNameField = key('KeyW', 'w') === false;
+
+    // Validation
+    save.name = 'KEEP';
+    input.value = '   '; closeNameModal(true);
+    o.blankNameIsRejected = save.name === 'KEEP';
+    openNameModal(); input.value = 'NEWNAME'; closeNameModal(false);
+    o.cancelDiscardsTheEdit = save.name === 'KEEP';
+    openNameModal(); input.value = 'Y'.repeat(40); closeNameModal(true);
+    o.longNameIsCapped = save.name.length === 14;
+    openNameModal(); input.value = 'A' + String.fromCharCode(7) + 'B'; closeNameModal(true);
+    o.controlCharsStripped = save.name === 'AB';
+
+    closeMenu();
+    return o;
+  });
+  for (const [k, v] of Object.entries(r)) ok(v === true, k);
+
+  // The prompt clears its flag ~120ms after closing, to swallow the trailing
+  // touchend of the tap that dismissed it. Wait that out before checking that
+  // the game has taken the keyboard back.
+  await page.waitForTimeout(300);
+  const jump = await page.evaluate(() => {
+    const ev = new KeyboardEvent('keydown', { code: 'Space', key: ' ', bubbles: true, cancelable: true });
+    window.dispatchEvent(ev);
+    return ev.defaultPrevented && jumpBuffer > 0;
+  });
+  ok(jump === true, 'SPACE still jumps during play');
+  await browser.close();
+}
+
+// 10. Typing for real, through the browser's own input pipeline.
+console.log('\nName entry (real typing):');
+{
+  const browser = await webkit.launch();
+  const ctx = await browser.newContext(TARGETS[0].ctx);
+  const page = await ctx.newPage();
+  await page.route('**/game.html', r => r.fulfill({
+    status: 200, headers: { 'content-type': 'text/html; charset=utf-8' }, body: html }));
+  await page.goto('https://turbo-dash.test/game.html');
+  await page.waitForTimeout(1200);
+  await page.evaluate(() => { openBoard(); openNameModal(); });
+  await page.click('#nameInput');
+  await page.keyboard.type('WAVE WON', { delay: 20 });
+  const typed = await page.evaluate(() => document.getElementById('nameInput').value);
+  ok(typed === 'WAVE WON', 'types a name containing W and a space', JSON.stringify(typed));
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(250);
+  const saved = await page.evaluate(() => ({ n: save.name, open: nameModalOpen }));
+  ok(saved.n === 'WAVE WON' && !saved.open, 'Enter commits and closes', JSON.stringify(saved));
+  await browser.close();
+}
+
+// 11. The board must always be able to show the player their own position.
+console.log('\nBoard: your own row is never lost:');
+{
+  const browser = await webkit.launch();
+  const ctx = await browser.newContext(TARGETS[0].ctx);
+  const page = await ctx.newPage();
+  await page.addInitScript(() => {
+    const rows = [];
+    for (let i = 0; i < 19; i++) rows.push({ id: 'r' + i, exists: true,
+      data: () => ({ name: 'R' + i, score: 20000 - i * 700, meters: 3000, stage: 'BLAZE' }) });
+    rows.push({ id: 'MINE', exists: true,
+      data: () => ({ name: 'YOU', score: 1500, meters: 260, stage: 'RUNNER' }) });
+    const q = () => ({ orderBy: () => q(), limit: () => q(),
+      onSnapshot(next) { setTimeout(() => next({ docs: rows, size: rows.length,
+        empty: false, docChanges: () => [], metadata: {} }), 20); return () => {}; },
+      doc: () => ({ set: () => Promise.resolve() }) });
+    window.claude = { use: n => Promise.resolve(n === 'db' ? { collection: () => q() } : null) };
+  });
+  await page.route('**/game.html', r => r.fulfill({
+    status: 200, headers: { 'content-type': 'text/html; charset=utf-8' }, body: html }));
+  await page.goto('https://turbo-dash.test/game.html');
+  await page.waitForTimeout(1300);
+  const r = await page.evaluate(() => {
+    save.clientId = 'MINE';
+    return { rows: boardRows.length, rank: myBoardRank() };
+  });
+  ok(r.rows === 20 && r.rank === 20,
+     'a player outside the visible rows still has a findable rank',
+     'rank ' + r.rank + ' of ' + r.rows);
+  await browser.close();
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);
