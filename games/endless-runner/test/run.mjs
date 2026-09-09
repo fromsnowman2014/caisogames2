@@ -207,5 +207,119 @@ console.log('\nGap reachability vs measured physics:');
   await browser.close();
 }
 
+// 7. Shop economy, and the skill gate on the strong items.
+console.log('\nShop:');
+{
+  const { browser, page } = await open(webkit, TARGETS[0].ctx);
+  const e = await page.evaluate(() => {
+    const o = {};
+    save.wallet = 0; save.owned = []; save.best = 0;
+    save.equip = { hat: 'none', rocket: 'none', trail: 'none' };
+    const cap = SHOP.hat[1], halo = SHOP.hat[4], turbo = SHOP.rocket[2];
+
+    o.brokePlayerCannotBuy = buyItem('hat', cap) === false;
+    save.wallet = 5000;
+    o.buyDeductsAndEquips = buyItem('hat', cap) &&
+      save.wallet === 5000 - cap.price && save.equip.hat === 'cap';
+    o.cannotBuyTwice = buyItem('hat', cap) === false;
+
+    // Money alone must never unlock the strong items - price gates time,
+    // not skill, so the good ones also need a real distance record.
+    save.wallet = 99999; save.best = 0;
+    o.moneyAloneCannotUnlockHalo = lockReason('hat', halo) !== null;
+    o.moneyAloneCannotUnlockTurbo = lockReason('rocket', turbo) !== null;
+    save.best = 3000;
+    o.recordUnlocksThem =
+      lockReason('hat', halo) === null && lockReason('rocket', turbo) === null;
+
+    // Effects
+    buyItem('rocket', turbo); restart();
+    o.turboStartsRunWinged = stage === 1;
+    buyItem('hat', halo); restart();
+    o.haloStartsRunShielded = power.shield === 1;
+    save.equip.hat = 'none'; save.equip.rocket = 'none'; restart();
+    o.withoutItemsStartsPlain = stage === 0 && power.shield === 0;
+
+    // A slower world must also score more slowly, or it would be a free win.
+    distance = 0;
+    save.equip.rocket = 'none'; const fast = targetSpeed();
+    save.equip.rocket = 'mini'; const slow = targetSpeed();
+    o.slowPackTradesScoreForTime = slow < fast;
+    save.equip.rocket = 'none';
+
+    // A coin bonus must never reach score, or coins could buy a rank.
+    save.equip.hat = 'crown'; restart();
+    stats.runCoins = 100; score = 1000;
+    const w0 = save.wallet, s0 = score;
+    finishRun();
+    o.coinBonusPaysWalletOnly = (save.wallet - w0) === 125 && score === s0;
+    save.equip.hat = 'none';
+
+    // Menus must pause the run rather than let it play on unseen.
+    restart(); started = true; const d0 = distance;
+    uiScreen = 'shop'; update(16); update(16);
+    o.menuPausesTheRun = distance === d0;
+    uiScreen = 'play'; restart();
+    return o;
+  });
+  for (const [k, v] of Object.entries(e)) ok(v === true, k);
+  await browser.close();
+}
+
+// 8. Cloud leaderboard. The game must be complete WITHOUT it, and must treat
+//    other viewers' rows as untrusted input.
+console.log('\nCloud leaderboard:');
+{
+  // (a) no cloud at all - the common case for a local file or plain web host
+  const { browser, page } = await open(webkit, TARGETS[0].ctx);
+  const off = await page.evaluate(() => ({
+    state: cloudState,
+    running: typeof elapsed === 'number' && elapsed > 0.2,
+    boardStillOpens: (openBoard(), uiScreen === 'board')
+  }));
+  ok(off.state === 'off' && off.running && off.boardStillOpens,
+     'game is complete with no cloud, and the board still opens', off.state);
+  await browser.close();
+
+  // (b) cloud present, including a hostile row
+  const b2 = await webkit.launch();
+  const c2 = await b2.newContext(TARGETS[0].ctx);
+  const p2 = await c2.newPage();
+  await p2.addInitScript(() => {
+    const q = () => ({
+      orderBy() { return q(); }, limit() { return q(); },
+      onSnapshot(next) {
+        setTimeout(() => next({ docs: [
+          { id: 'ok', exists: true, data: () => ({ name: 'RIVAL', score: 900, meters: 100, stage: 'BLAZE' }) },
+          { id: 'bad', exists: true, data: () => ({ name: 'Z'.repeat(90), score: 'nope', meters: null }) }
+        ], size: 2, empty: false, docChanges: () => [], metadata: {} }), 20);
+        return () => {};
+      },
+      doc: () => ({ set(d) { window.__set = d; return Promise.resolve(); } })
+    });
+    window.claude = { use: n => Promise.resolve(n === 'db' ? { collection: () => q() } : null) };
+  });
+  await p2.route('**/game.html', r => r.fulfill({
+    status: 200, headers: { 'content-type': 'text/html; charset=utf-8' }, body: html }));
+  await p2.goto('https://turbo-dash.test/game.html');
+  await p2.waitForTimeout(1200);
+  const on = await p2.evaluate(async () => {
+    save.name = 'ME'; save.bestScore = 500; save.best = 90; lastSubmitted = -1;
+    await submitScore();
+    return {
+      state: cloudState,
+      rows: boardRows.length,
+      sanitised: boardRows.every(r => r.name.length <= 14 &&
+        typeof r.score === 'number' && isFinite(r.score) &&
+        typeof r.meters === 'number' && isFinite(r.meters)),
+      submittedName: window.__set ? window.__set.name : null
+    };
+  });
+  ok(on.state === 'ready' && on.rows === 2, 'subscribes to the shared board', 'rows ' + on.rows);
+  ok(on.sanitised === true, 'other viewers rows are sanitised before display');
+  ok(on.submittedName === 'ME', 'posts one row for this player', JSON.stringify(on.submittedName));
+  await b2.close();
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

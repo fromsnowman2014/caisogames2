@@ -1,8 +1,8 @@
 {
   "id": "endless-runner",
   "name": "Turbo Dash",
-  "version": "3.0.0",
-  "description": "A colorful endless runner platformer. Complete missions mid-run to collect Evolution Cores and transform: unlock the double jump, then the triple jump and glide. Chain coin combos across four biomes. Keyboard and touch.",
+  "version": "4.0.0",
+  "description": "A colorful endless runner platformer. Evolve mid-run to unlock the double jump and glide, spend coins in the shop on hats, packs and trails, and chase a live shared leaderboard. Keyboard and touch.",
   "author": "CaisoGames AI Team",
   "genre": "Endless Runner Platformer",
   "tags": [
@@ -42,7 +42,13 @@
     "Four crossfading biomes: Meadow, Sunset Ridge, Midnight, Frost Peaks",
     "Screen shake, hit-stop, speed lines and WebAudio sound with no asset files",
     "Full touch support with multi-finger hold tracking and iOS audio unlock",
-    "Boot screen that explains itself if a sandboxed viewer blocks its scripts"
+    "Boot screen that explains itself if a sandboxed viewer blocks its scripts",
+    "Shop with three slots: hats, back packs and trails, bought with coins earned by playing",
+    "Strong items are gated on a distance RECORD as well as price - price alone gates time, not skill",
+    "Item effects chosen so none can inflate a score: the coin bonus pays the wallet only, and the slow pack trades scoring rate for reaction time",
+    "Cloud leaderboard over the artifact db capability: live top 20, one row per player",
+    "Name prompt via a real HTML input, so phones get their keyboard and accessibility",
+    "The game is complete without the cloud - the board falls back to this device's best"
   ],
   "stats": {
     "playtime": "1-5 minutes per run",
@@ -59,13 +65,16 @@
       "Coin combo chaining",
       "Spike near-misses",
       "Power-up collection",
-      "Stage-3 gliding"
+      "Stage-3 gliding",
+      "Coin economy and cosmetics",
+      "Leaderboard chasing"
     ],
     "unique": [
       "Missions pay out a visible ability rather than an abstract score bonus",
       "A power curve inside a single run: weak, strong, unstoppable",
       "Form is lost on death, so loss aversion drives the restart",
-      "Gaps sized from each form's measured physics, not an estimate"
+      "Gaps sized from each form's measured physics, not an estimate",
+      "Shop perks are designed so buying power cannot buy leaderboard position"
     ]
   },
   "difficulty": {
@@ -94,7 +103,7 @@
     ]
   },
   "createdAt": "2026-09-08",
-  "updatedAt": "2026-09-08",
+  "updatedAt": "2026-09-09",
   "status": "playable",
   "technicalDetails": {
     "engine": "Custom HTML5 Canvas",
@@ -133,9 +142,15 @@
       "explains itself when a sandboxed preview blocks its scripts",
       "evolution stages, air-jump physics and glide",
       "a missed Evolution Core is re-offered rather than lost",
-      "hardest generated gap stays well inside each form's measured reach"
+      "hardest generated gap stays well inside each form's measured reach",
+      "shop economy: pricing, ownership, equip, and no double purchase",
+      "money alone cannot unlock the record-gated items",
+      "coin bonus reaches the wallet but never the score",
+      "menus pause the run instead of letting it play on unseen",
+      "cloud leaderboard subscribes, submits one row, and sanitises other viewers' data",
+      "the game is complete with no cloud at all"
     ],
-    "checks": 26
+    "checks": 42
   },
   "progression": {
     "type": "in-run evolution",
@@ -162,5 +177,97 @@
       }
     ],
     "note": "Evolution is per-run and resets on death. Mission difficulty tiers persist, so cores get harder to earn over time."
+  },
+  "shop": {
+    "currency": "Coins collected while running, banked into a wallet at the end of each run",
+    "slots": [
+      "hat",
+      "rocket",
+      "trail"
+    ],
+    "designRule": "Nothing sold may inflate a score. Coin bonuses pay the wallet only; the slow pack reduces scoring rate as well as difficulty; the strongest two items additionally require a distance record, because a price tag gates patience rather than skill.",
+    "items": [
+      {
+        "slot": "hat",
+        "id": "cap",
+        "price": 120,
+        "effect": "cosmetic"
+      },
+      {
+        "slot": "hat",
+        "id": "phones",
+        "price": 380,
+        "effect": "magnet lasts 50% longer"
+      },
+      {
+        "slot": "hat",
+        "id": "crown",
+        "price": 950,
+        "effect": "+25% coins to wallet, score unchanged"
+      },
+      {
+        "slot": "hat",
+        "id": "halo",
+        "price": 1800,
+        "needBest": 1200,
+        "effect": "start each run with a shield"
+      },
+      {
+        "slot": "rocket",
+        "id": "mini",
+        "price": 700,
+        "effect": "world 8% slower - and scoring 8% slower with it"
+      },
+      {
+        "slot": "rocket",
+        "id": "turbo",
+        "price": 2400,
+        "needBest": 2500,
+        "effect": "start each run already WINGED"
+      },
+      {
+        "slot": "trail",
+        "id": "spark",
+        "price": 200,
+        "effect": "cosmetic"
+      },
+      {
+        "slot": "trail",
+        "id": "flame",
+        "price": 500,
+        "effect": "cosmetic"
+      },
+      {
+        "slot": "trail",
+        "id": "rain",
+        "price": 900,
+        "effect": "cosmetic"
+      }
+    ]
+  },
+  "leaderboard": {
+    "backend": "Artifact `db` capability (shared realtime document store)",
+    "shape": "One document per player keyed by a per-browser id; live top 20 via orderBy(score,desc).limit(20).onSnapshot",
+    "identity": "Self-declared name in localStorage. No verified user identity is available to the page, so this is a friendly board, not anti-cheat.",
+    "degradation": "Outside the artifact viewer there is no window.claude at all, so the board falls back to this device's own best and the game is otherwise unchanged.",
+    "constraint": "The db capability cannot be combined with public sharing, so the cloud build is organization-internal. A separate public build ships without db.",
+    "untrustedInput": "Rows are written by other viewers: names are stripped of control characters and capped, and numbers are coerced before display."
+  },
+  "builds": {
+    "script": "node games/endless-runner/build-artifact.mjs",
+    "outputs": [
+      {
+        "file": "turbo-dash.html",
+        "title": "Turbo Dash",
+        "capabilities": "none",
+        "sharing": "public link OK"
+      },
+      {
+        "file": "turbo-dash-cloud.html",
+        "title": "Turbo Dash Arena",
+        "capabilities": "db",
+        "sharing": "organization-internal only"
+      }
+    ]
   }
 }
