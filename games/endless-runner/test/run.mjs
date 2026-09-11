@@ -563,5 +563,195 @@ console.log('\nSuper Suit:');
   await browser.close();
 }
 
+// 14. LEVELS AND THE NEW HAZARDS.
+console.log('\nLevels and hazards:');
+{
+  const { browser, page } = await open(webkit, TARGETS[0].ctx);
+  const e = await page.evaluate(() => {
+    const o = {};
+    restart();
+    distance = 0;      o.startsAtLevelOne = levelOf() === 1;
+    distance = 29999;  o.reachesLevelTen = levelOf() === 10;
+    distance = 999999; o.levelIsCapped = levelOf() === 10;
+    o.everyLevelIsNamed = LEVELS.length === 10 && LEVELS.every(l => l.name);
+
+    // Hazards arrive one at a time, each with a level to itself to learn it.
+    distance = 0;         o.noHazardsAtTheStart = crumbleChance() === 0 && fakeChance() === 0;
+    distance = 3000 * 2;  o.crumblersFromLevelThree = crumbleChance() > 0 && fakeChance() === 0;
+    distance = 3000 * 4;  o.fakesFromLevelFive = fakeChance() > 0;
+    distance = 29999;     o.hazardRatesStayBounded = crumbleChance() <= 0.45 && fakeChance() <= 0.40;
+
+    // A fake is scenery and must never hold the player up.
+    restart(); started = true;
+    platforms.length = 0;
+    platforms.push({ x: PLAYER_X - 40, y: 300, width: 200, type: 'floating',
+                     fake: true, revealed: 0, crumble: false, crumbleTimer: -1,
+                     fallen: false, tufts: null });
+    player.y = 300 - PLAYER_H; player.velocityY = 4; player.grounded = false;
+    checkCollisions();
+    o.aFakeNeverCatchesYou = !player.grounded;
+    o.aFakeRevealsItselfOnContact = platforms[0].revealed === 1;
+
+    // A crumbler catches you first, warns, then lets go.
+    restart(); started = true;
+    platforms.length = 0;
+    platforms.push({ x: PLAYER_X - 40, y: 300, width: 200, type: 'floating',
+                     fake: false, crumble: true, crumbleTimer: -1, fallen: false, tufts: null });
+    player.y = 300 - PLAYER_H; player.velocityY = 4;
+    player.grounded = false; player.isJumping = true;
+    checkCollisions();
+    const plat = platforms[0];
+    o.aCrumblerCatchesYouFirst = player.grounded === true;
+    o.landingLightsTheFuse = plat.crumbleTimer === CRUMBLE_FRAMES;
+    o.theFuseGivesRealWarningTime = CRUMBLE_FRAMES >= 40;
+    for (let i = 0; i < CRUMBLE_FRAMES; i++) updateCrumbling();
+    o.theCrumblerThenCollapses = plat.fallen === true;
+    player.y = 300 - PLAYER_H; player.velocityY = 4; player.grounded = false;
+    checkCollisions();
+    o.aCollapsedSlabHoldsNothing = !player.grounded;
+
+    // THE FAIRNESS RULE: the real route must be walkable ignoring every fake.
+    restart(); distance = 29999;
+    for (let i = 0; i < 250; i++) generatePlatform();
+    const reals = platforms.filter(q => !q.fake);
+    let worst = 0, backwards = 0;
+    for (let k = 1; k < reals.length; k++) {
+      const g = reals[k].x - (reals[k - 1].x + reals[k - 1].width);
+      if (g < 0) backwards++;
+      worst = Math.max(worst, g);
+    }
+    o.theRealRouteNeverNeedsAFake = backwards === 0 && worst < 400;
+    restart();
+    return o;
+  });
+  for (const [k, v] of Object.entries(e)) ok(v === true, k);
+  await browser.close();
+}
+
+// 15. THE MERCHANT. Mid-run spending without a menu, because a menu would stop
+//     the run the whole game exists to keep moving.
+console.log('\nMerchant:');
+{
+  const { browser, page } = await open(webkit, TARGETS[0].ctx);
+  const e = await page.evaluate(() => {
+    const o = {};
+    const put = () => { powerups.length = 0;
+      powerups.push({ x: PLAYER_X + PLAYER_W / 2, y: player.y + PLAYER_H / 2,
+                      type: 'merchant', goods: 'shield', taken: false, bob: 0 });
+      return powerups[0]; };
+
+    restart(); save.wallet = 0;   o.noOfferWhileBroke = merchantChance() === 0;
+    save.wallet = 500;            o.offersOnceAffordable = merchantChance() > 0;
+
+    restart(); started = true; save.wallet = 200; power.shield = 0;
+    let m = put(); checkCollisions();
+    o.buyingDeductsAndGrants = save.wallet === 200 - MERCHANT_PRICE &&
+                               power.shield === 1 && m.taken;
+
+    // Refused purchases must not quietly eat the coins OR the balloon.
+    restart(); started = true; save.wallet = 10; power.shield = 0;
+    m = put(); checkCollisions();
+    o.refusedPurchaseChangesNothing = save.wallet === 10 && power.shield === 0 && !m.taken;
+
+    // The offer is decided up front so it can be shown before committing.
+    restart(); lives = MAX_LIVES;
+    let heartsAtFull = 0;
+    for (let i = 0; i < 300; i++) if (rollMerchantGoods() === 'heart') heartsAtFull++;
+    o.neverSellsHeartsAtFullLives = heartsAtFull === 0;
+    lives = 1;
+    let heartsWhenHurt = 0;
+    for (let i = 0; i < 300; i++) if (rollMerchantGoods() === 'heart') heartsWhenHurt++;
+    o.sellsHeartsWhenHurt = heartsWhenHurt > 30;
+    restart();
+    return o;
+  });
+  for (const [k, v] of Object.entries(e)) ok(v === true, k);
+  await browser.close();
+}
+
+// 16. PETS. The rule: a pet may ease the RUN or fatten the WALLET, never
+//     inflate the SCORE.
+console.log('\nPets:');
+{
+  const { browser, page } = await open(webkit, TARGETS[0].ctx);
+  const e = await page.evaluate(() => {
+    const o = {};
+    o.threePetsOfferedPlusNone = SHOP.pet.length === 4;
+    save.wallet = 99999; save.best = 0;
+    o.strongPetsNeedARecordNotJustMoney =
+      lockReason('pet', SHOP.pet[2]) !== null && lockReason('pet', SHOP.pet[3]) !== null;
+    save.best = 9999;
+
+    // Pup: gathers coins, and the help lands in the wallet only.
+    buyItem('pet', SHOP.pet[1]); restart(); started = true;
+    coins.length = 0;
+    coins.push({ x: PLAYER_X + 120, y: player.y + PLAYER_H / 2, collected: false });
+    const before = coins[0].x;
+    for (let i = 0; i < 10; i++) updatePet();
+    o.pupDrawsCoinsIn = coins[0].x < before;
+
+    const scoreOf = (pet) => {
+      save.equip.pet = pet; restart(); started = true;
+      const s0 = score;
+      coins.length = 0;
+      coins.push({ x: PLAYER_X + PLAYER_W / 2, y: player.y + PLAYER_H / 2, collected: false });
+      checkCollisions();
+      return score - s0;
+    };
+    o.pupAddsNothingToScore = scoreOf('pup') === scoreOf('none');
+
+    save.equip.pet = 'pup'; restart(); started = true;
+    stats.runCoins = 10; petCoinBonus = 30;
+    const w0 = save.wallet; finishRun();
+    o.pupBonusLandsInTheWallet = (save.wallet - w0) === 40;
+
+    save.equip.pet = 'bird'; o.onlyTheBirdSpotsFakes = birdSpotsFakes() === true;
+    save.equip.pet = 'pup';  o.othersDoNot = birdSpotsFakes() === false;
+
+    // Cub spares the FORM once - it does not hand out lives.
+    save.equip.pet = 'cub'; restart(); started = true;
+    evolve(); evolve();
+    const st = stage, lv = lives;
+    player.y = H + 200; checkCollisions();
+    o.cubSparesTheFormOnce = stage === st && cubUsed;
+    o.cubStillCostsTheLife = lives === lv - 1;
+    const st2 = stage;
+    player.y = H + 200; checkCollisions();
+    o.cubOnlyWorksOncePerRun = stage === st2 - 1;
+    restart(); o.cubRechargesNextRun = cubUsed === false;
+
+    save.equip.pet = 'none'; restart();
+    return o;
+  });
+  for (const [k, v] of Object.entries(e)) ok(v === true, k);
+  await browser.close();
+}
+
+// 17. Announcements must never overlap each other.
+console.log('\nBanner queue:');
+{
+  const { browser, page } = await open(webkit, TARGETS[0].ctx);
+  const e = await page.evaluate(() => {
+    const o = {};
+    restart(); started = true; bannerQueue = []; banner = null;
+    // 2100m is genuinely both a zone change and a level change.
+    pushBanner('ZONE 4', 'FROST PEAKS', '', '#FFE066');
+    pushBanner('LEVEL 7', 'HIGH WIRE', 'Narrower platforms', '#FFB86C');
+    pushBanner('STAGE 2', 'WINGED', 'DOUBLE JUMP', '#E9D5FF');
+    updateBanners();
+    o.onlyOneShowsAtATime = banner !== null && bannerQueue.length === 2;
+    const first = banner.sub;
+    for (let i = 0; i < 200; i++) updateBanners();
+    o.theNextOneStillGetsItsTurn = banner !== null && banner.sub !== first;
+    for (let i = 0; i < 40; i++) pushBanner('X', 'Y', '', '#fff');
+    o.theQueueStaysBounded = bannerQueue.length <= 3;
+    restart();
+    o.theQueueClearsBetweenRuns = bannerQueue.length === 0 && banner === null;
+    return o;
+  });
+  for (const [k, v] of Object.entries(e)) ok(v === true, k);
+  await browser.close();
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

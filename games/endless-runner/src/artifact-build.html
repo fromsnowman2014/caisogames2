@@ -699,6 +699,10 @@ function playSfx(name) {
     case "evolve": tone(330, 0.55, "square",   0.20, 1760); break;
     case "buy":    tone(880, 0.16, "triangle", 0.18, 1320); break;
     case "heart":  tone(680, 0.20, "triangle", 0.18, 1020); break;
+    case "crack":  tone(300, 0.10, "square",   0.12, 220);  break;
+    case "crumble":tone(170, 0.34, "sawtooth", 0.16, 70);   break;
+    case "fake":   tone(420, 0.26, "sine",     0.16, 130);  break;
+    case "levelUp":tone(520, 0.34, "square",   0.18, 1560); break;
     case "hurt":   tone(260, 0.32, "sawtooth", 0.20, 90);   break;
     case "lastLife": tone(180, 0.45, "square",  0.20, 120);  break;
     case "deny":   tone(200, 0.16, "square",   0.14, 140);  break;
@@ -741,6 +745,98 @@ function playSfx(name) {
    climb is cut to ~126px. The staircase sections stay tight and readable
    instead of being coin-flips.
    ------------------------------------------------------------------------ */
+
+/* ---------------------------------------------------------------------------
+   LEVELS
+   ----------------------------------------------------------------------------
+   Ten levels, one every 300m, each one naming what it adds. The levels are the
+   difficulty curve made VISIBLE: previously the game got harder through a
+   dozen quiet knobs and the player could only feel it, never see it. A named
+   level that announces "CRUMBLING PLATFORMS" both warns the player and gives
+   them something to brag about reaching.
+
+   Hazards are introduced one at a time, and never two in the same level, so
+   there is always a stretch to learn each new thing before the next arrives.
+   ------------------------------------------------------------------------ */
+
+const MAX_LEVEL  = 10;
+const LEVEL_SPAN = 3000;    // 300m per level
+
+const LEVELS = [
+  { n: 1,  name: "WARM UP",        adds: "" },
+  { n: 2,  name: "STEPPING UP",    adds: "Floating platforms" },
+  { n: 3,  name: "CRUMBLE",        adds: "Crumbling platforms" },
+  { n: 4,  name: "SPIKE ALLEY",    adds: "More spikes" },
+  { n: 5,  name: "MIRAGE",         adds: "Fake platforms" },
+  { n: 6,  name: "FAST LANE",      adds: "Tighter gaps" },
+  { n: 7,  name: "HIGH WIRE",      adds: "Narrower platforms" },
+  { n: 8,  name: "DOUBLE TROUBLE", adds: "More fakes and crumbles" },
+  { n: 9,  name: "GAUNTLET",       adds: "Everything, faster" },
+  { n: 10, name: "TURBO HELL",     adds: "Maximum difficulty" }
+];
+
+function levelOf() {
+  return Math.min(MAX_LEVEL, 1 + Math.floor(distance / LEVEL_SPAN));
+}
+function levelDef() { return LEVELS[levelOf() - 1]; }
+
+/** 0 at level 1, 1 at level 10 - the single knob most difficulty reads from. */
+function levelT() { return (levelOf() - 1) / (MAX_LEVEL - 1); }
+
+let shownLevel;     // the level the banner last announced
+
+/* --- BANNER QUEUE ---------------------------------------------------------
+   Zones arrive every 700m, levels every 300m and evolutions whenever a mission
+   completes, so two of them WILL land on the same moment - 2100m is both a
+   zone change and a level change. Drawn independently they wrote over each
+   other and neither could be read.
+
+   So announcements queue instead. One is shown at a time, in the order they
+   happened, and the next waits its turn.
+   ---------------------------------------------------------------------- */
+
+let bannerQueue = [];
+let banner = null;
+
+function pushBanner(title, sub, note, color, frames) {
+  bannerQueue.push({ title, sub, note, color, frames: frames || 140,
+                     total: frames || 140 });
+  // Never let a backlog build up during a frantic stretch.
+  if (bannerQueue.length > 3) bannerQueue.shift();
+}
+
+function updateBanners() {
+  if (!banner && bannerQueue.length) banner = bannerQueue.shift();
+  if (banner && --banner.frames <= 0) banner = null;
+}
+
+function drawBanner() {
+  if (!banner || !started || gameOver) return;
+  const a = Math.min(1, banner.frames / 38);
+  ctx.globalAlpha = a;
+  outlinedText(banner.title, W / 2, 196,
+               "bold 26px 'Trebuchet MS', sans-serif", "#FFFFFF", "center");
+  outlinedText(banner.sub, W / 2, 244,
+               "bold 44px 'Trebuchet MS', sans-serif", banner.color, "center");
+  if (banner.note) {
+    outlinedText(banner.note, W / 2, 280,
+                 "bold 20px 'Trebuchet MS', sans-serif", "#FFFFFF", "center");
+  }
+  ctx.globalAlpha = 1;
+}
+
+function updateLevel() {
+  const L = levelOf();
+  if (L !== shownLevel) {
+    if (shownLevel !== 0 && L > shownLevel) {
+      pushBanner("LEVEL " + L, levelDef().name, levelDef().adds,
+                 L >= 8 ? "#FF6B6B" : "#FFB86C");
+      playSfx("levelUp");
+      addScore(100 * L);
+    }
+    shownLevel = L;
+  }
+}
 
 const MAX_STEP_UP = 90;   // next platform may be at most this much higher
 // The ceiling is deliberately high. MAX_STEP_UP still caps how fast the world
@@ -822,6 +918,52 @@ function targetSpeed() {
  * Append one platform to the right of the last one, then decorate it with
  * coins and (maybe) a spike.
  */
+function crumbleChance() {
+  if (levelOf() < 3) return 0;
+  return Math.min(0.45, 0.18 + (levelT() - 0.22) * 0.5);
+}
+function fakeChance() {
+  if (levelOf() < 5) return 0;
+  return Math.min(0.40, 0.16 + (levelT() - 0.44) * 0.5);
+}
+
+/**
+ * FAKE PLATFORMS (level 5+), and why they are built as DECOYS.
+ *
+ * A fake platform sitting in the middle of the only route is not difficulty,
+ * it is a coin flip: the player either happens to know or happens to die, and
+ * the whole game has been built on the rule that a death must feel earned.
+ *
+ * So fakes are never part of the route. One is placed in the MIDDLE OF A WIDE
+ * GAP, exactly where a tempting stepping stone would be. A player who reads it
+ * and jumps the gap in one go is completely unaffected; only a player who
+ * reaches for the easy option falls. The trap is opt-in, which is the
+ * difference between a hard game and a cheap one.
+ *
+ * They also carry a tell - see drawPlatforms - so reading them is a skill
+ * rather than a memory test.
+ */
+function maybeAddDecoy(prev, plat) {
+  if (levelOf() < 5) return;
+  const gap = plat.x - (prev.x + prev.width);
+  if (gap < 150) return;                 // no room to bait anything
+  if (Math.random() > fakeChance()) return;
+
+  const w = rand(70, 105);
+  platforms.push({
+    x: prev.x + prev.width + (gap - w) / 2,
+    y: Math.min(prev.y, plat.y) - rand(10, 46),
+    width: w,
+    type: "floating",
+    fake: true,
+    revealed: 0,
+    crumble: false,
+    crumbleTimer: -1,
+    fallen: false,
+    tufts: null
+  });
+}
+
 /**
  * The widest gap the player can actually cross while also climbing `rise`
  * pixels. See the KEEPING GAPS JUMPABLE note above - climbing eats horizontal
@@ -836,20 +978,30 @@ function reachableGap(rise) {
   return Math.max(45, full * (1 - rise / 150));
 }
 
+/** The last REAL platform - decoys must never anchor the chain. */
+function lastRealPlatform() {
+  for (let i = platforms.length - 1; i >= 0; i--) {
+    if (!platforms[i].fake) return platforms[i];
+  }
+  return platforms[platforms.length - 1];
+}
+
 function generatePlatform() {
-  const last = platforms[platforms.length - 1];
+  const last = lastRealPlatform();
   const [gapMin, gapMax] = gapRange();
   let gap = rand(gapMin, gapMax);
 
   // Decide whether this is ground level or a floating stone slab.
   // Early on we lean heavily on ground platforms so it stays gentle.
-  const floatChance = distance < 3000 ? 0.1 : 0.35;
+  const floatChance = levelOf() < 2 ? 0.08 : Math.min(0.42, 0.22 + levelT() * 0.25);
   const isFloating = Math.random() < floatChance;
 
   let y, width, type, wantsSpike = false;
   if (isFloating) {
     type  = "floating";
-    width = rand(100, 150);
+    // Level 7 starts shaving the landing area itself.
+    const shrink = levelOf() >= 7 ? (1 - (levelT() - 0.66) * 0.55) : 1;
+    width = rand(100, 150) * shrink;
     // Stay within one jump of the platform we are leaving.
     const highest = Math.max(MIN_PLAT_Y, last.y - MAX_STEP_UP);
     y = rand(highest, MAX_PLAT_Y - 20);
@@ -866,17 +1018,30 @@ function generatePlatform() {
   // Charge the climb against the horizontal budget so the jump stays possible.
   gap = Math.min(gap, reachableGap(last.y - y));
 
+  // CRUMBLING PLATFORMS (level 3+). Real, but they collapse shortly after
+  // they are stood on, so the skill is refusing to linger. They are only ever
+  // floating slabs: a crumbling piece of ground would leave no route at all.
+  const crumble = type === "floating" && levelOf() >= 3 &&
+                  Math.random() < crumbleChance();
+
   const plat = {
     x: last.x + last.width + gap,
     y: y,
     width: width,
     type: type,
+    crumble: crumble,
+    crumbleTimer: -1,      // counts down once the player has landed on it
+    fallen: false,
     // Grass tufts are randomised once at creation so they don't shimmer.
     tufts: type === "ground"
       ? Array.from({ length: randInt(5, 7) }, () => Math.random())
       : null
   };
   platforms.push(plat);
+
+  // A decoy is added AFTER the real platform so the chain's last entry stays
+  // the real one - the generator walks backwards from it to place the next.
+  maybeAddDecoy(last, plat);
 
   decoratePlatform(plat, wantsSpike);
 }
@@ -919,6 +1084,16 @@ function decoratePlatform(plat, wantsSpike) {
     const hx = plat.x + plat.width * rand(0.3, 0.7);
     if (spikeX === null || Math.abs(hx - spikeX) > 70) {
       powerups.push({ x: hx, y: plat.y - 64, type: "heart",
+                      taken: false, bob: Math.random() * Math.PI * 2 });
+    }
+  }
+
+  // --- Merchant balloon: high enough to demand a real jump. ---
+  if (plat.width > 170 && Math.random() < merchantChance()) {
+    const mx = plat.x + plat.width * rand(0.35, 0.65);
+    if (spikeX === null || Math.abs(mx - spikeX) > 80) {
+      powerups.push({ x: mx, y: plat.y - 104, type: "merchant",
+                      goods: rollMerchantGoods(),
                       taken: false, bob: Math.random() * Math.PI * 2 });
     }
   }
@@ -1043,7 +1218,6 @@ const STAGES = [
 let stage;          // index into STAGES - the current form
 let cores;          // Evolution Cores waiting to be collected
 let evolveFlash;    // frames of white-out during a transformation
-let stageBanner;    // frames the "STAGE 2 - WINGED" banner stays up
 let coresEarned;    // cores dropped this run (so the HUD can promise the next)
 
 function stageDef() { return STAGES[stage]; }
@@ -1093,7 +1267,9 @@ function evolve() {
   // The transformation is the reward, so it gets the biggest feedback in the
   // game: a white-out, a hard shake, a freeze, and a shower of the new colour.
   evolveFlash = 22;
-  stageBanner = 170;
+  pushBanner("STAGE " + (stage + 1), s.name,
+             stage === 1 ? "DOUBLE JUMP UNLOCKED" : "TRIPLE JUMP + HOLD TO GLIDE",
+             s.aura, 165);
   hitStop = 10;
   shake(20);
   playSfx("evolve");
@@ -1179,7 +1355,6 @@ function updatePowers() {
   if (invuln > 0) invuln--;
   if (evolveFlash > 0) evolveFlash--;
   if (reviveFlash > 0) reviveFlash--;
-  if (stageBanner > 0) stageBanner--;
 
   // Magnet: drag nearby uncollected coins toward the player.
   if (power.magnet > 0) {
@@ -1195,6 +1370,163 @@ function updatePowers() {
       }
     }
   }
+}
+
+/* ---------------------------------------------------------------------------
+   4b-2. THE MERCHANT
+   ----------------------------------------------------------------------------
+   Coins were only spendable between runs, which meant a wallet full of coins
+   did nothing for the run you were actually playing.
+
+   The obvious fix - open the shop mid-run - is the wrong one. A runner lives
+   on uninterrupted momentum, and a menu in the middle of it kills the tension
+   the whole game is built to create. On a phone it is worse still: the player
+   is holding the screen to jump, so a menu appears under a finger that is
+   already pressing something.
+
+   So the merchant is a BALLOON on the track instead. It shows exactly what it
+   sells and what it costs, it floats high enough to need a deliberate jump,
+   and buying it is simply reaching it. One decision, taken at full speed, with
+   no pause and no menu: do I spend the coins and take the detour, or stay on
+   the safe line?
+   ------------------------------------------------------------------------ */
+
+const MERCHANT_PRICE = 60;
+
+function merchantChance() {
+  // Only worth offering once the player has coins to spend.
+  if (save.wallet < MERCHANT_PRICE) return 0;
+  return distance < 4000 ? 0.04 : 0.08;
+}
+
+/** Decide what this particular balloon is selling, and show it up front. */
+function rollMerchantGoods() {
+  // A player who is losing gets offered what they actually need. Blind
+  // gambling would be cheaper to build but worse to play - you cannot make a
+  // real decision about a mystery box.
+  if (lives < MAX_LIVES && Math.random() < 0.38) return "heart";
+  const pool = ["shield", "magnet", "wings"];
+  return pool[randInt(0, pool.length - 1)];
+}
+
+function buyFromMerchant(pu) {
+  if (save.wallet < MERCHANT_PRICE) {
+    addPopup("NEED " + (MERCHANT_PRICE - save.wallet) + " MORE", "#FF9F5A");
+    playSfx("deny");
+    return false;
+  }
+  save.wallet -= MERCHANT_PRICE;
+  persist();
+  activatePower(pu.goods);
+  addPopup("-" + MERCHANT_PRICE + " COINS", "#FFE066");
+  return true;
+}
+
+/* ---------------------------------------------------------------------------
+   4b-3. PETS
+   ----------------------------------------------------------------------------
+   A companion that trails the player and does one job each. Three of them, in
+   their own shop slot.
+
+   The balance rule that shapes all three: a pet may make the RUN easier or the
+   WALLET fatter, but it may never inflate the SCORE - the same rule the Crown
+   follows. A pet that hoovered up coins for points would let a patient player
+   buy their way up a shared leaderboard, which is the one thing the economy
+   has been designed the whole way through to prevent.
+
+     PUP   gathers coins, and those coins pay the wallet ONLY.
+     BIRD  spots fakes early - a perception aid for a trap that was already
+           avoidable, so it sharpens play rather than replacing it.
+     CUB   absorbs the penalty on one revive per run. It does not grant a life;
+           it softens the cost of losing one, which is a smaller, better gift.
+   ------------------------------------------------------------------------ */
+
+const PET_RANGE = 165;
+
+let petX, petY;          // trails the player with a lag
+let cubUsed;             // the Cub's one save, spent for this run
+let petCoinBonus;        // wallet-only coins the Pup has gathered this run
+
+function petId() { return save.equip.pet || "none"; }
+function hasPet(id) { return petId() === id; }
+
+function updatePet() {
+  // A springy follow, offset behind and above, so it reads as a companion
+  // rather than a second cursor.
+  const tx = PLAYER_X - 46 + Math.sin(elapsed * 2.2) * 5;
+  const ty = player.y - 26 + Math.sin(elapsed * 3.1) * 6;
+  petX += (tx - petX) * 0.12;
+  petY += (ty - petY) * 0.12;
+
+  if (hasPet("pup")) {
+    const cx = PLAYER_X + PLAYER_W / 2, cy = player.y + PLAYER_H / 2;
+    for (const c of coins) {
+      if (c.collected) continue;
+      const dx = cx - c.x, dy = cy - c.y;
+      const d = Math.hypot(dx, dy);
+      if (d < PET_RANGE && d > 0.01) {
+        const pull = 4.5 * (1 - d / PET_RANGE) + 1.2;
+        c.x += (dx / d) * pull;
+        c.y += (dy / d) * pull;
+      }
+    }
+  }
+}
+
+/** The Bird marks fakes before the player is committed to a line. */
+function birdSpotsFakes() { return hasPet("bird"); }
+
+function drawPet() {
+  const id = petId();
+  if (id === "none" || !started) return;
+  ctx.save();
+  ctx.translate(petX, petY);
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = "#22303C";
+
+  if (id === "pup") {
+    ctx.fillStyle = "#D9A15B";
+    ctx.fillRect(-11, -6, 20, 13); ctx.strokeRect(-11, -6, 20, 13);
+    ctx.fillRect(5, -12, 11, 11);  ctx.strokeRect(5, -12, 11, 11);
+    ctx.fillStyle = "#8A5A2B";
+    ctx.beginPath(); ctx.moveTo(6, -12); ctx.lineTo(2, -3); ctx.lineTo(9, -4);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = "#000";
+    ctx.beginPath(); ctx.arc(12, -7, 1.8, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "#D9A15B"; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(-11, -4);
+    ctx.lineTo(-17, -9 + Math.sin(elapsed * 14) * 4); ctx.stroke();
+  } else if (id === "bird") {
+    const flap = Math.sin(elapsed * 15) * 7;
+    ctx.fillStyle = "#7FD4E6";
+    ctx.beginPath(); ctx.ellipse(0, 0, 11, 8, 0, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = "#54B4C9";
+    ctx.beginPath();
+    ctx.moveTo(-2, -2); ctx.quadraticCurveTo(-12, -10 - flap, -16, 2 - flap);
+    ctx.quadraticCurveTo(-8, 0, -2, -2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = "#FFB347";
+    ctx.beginPath(); ctx.moveTo(10, 0); ctx.lineTo(17, 2); ctx.lineTo(10, 4);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = "#000";
+    ctx.beginPath(); ctx.arc(5, -2, 1.8, 0, Math.PI * 2); ctx.fill();
+  } else if (id === "cub") {
+    ctx.fillStyle = cubUsed ? "#7D7A86" : "#C792EA";
+    ctx.beginPath(); ctx.arc(0, 0, 11, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-9, -7); ctx.lineTo(-5, -15); ctx.lineTo(-1, -8);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(9, -7); ctx.lineTo(5, -15); ctx.lineTo(1, -8);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = "#000";
+    ctx.beginPath(); ctx.arc(-4, -1, 1.9, 0, Math.PI * 2);
+    ctx.arc(4, -1, 1.9, 0, Math.PI * 2); ctx.fill();
+    if (!cubUsed) {
+      ctx.strokeStyle = "rgba(199,146,234,0.7)"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(0, 0, 16 + Math.sin(elapsed * 5) * 1.5, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
 }
 
 /* ---------------------------------------------------------------------------
@@ -1244,7 +1576,6 @@ let zoneIndex;      // which biome we are in
 let zoneFade;       // frames left in the current crossfade
 let stars;          // star field, only visible in night zones
 let speedLines;     // horizontal streaks that appear at high scroll speed
-let zoneBanner;     // frames left showing the "ZONE 2 - MIDNIGHT" banner
 
 function hexToRgb(h) {
   const n = parseInt(h.slice(1), 16);
@@ -1264,11 +1595,11 @@ function updateBiome() {
   if (want !== zoneIndex) {
     zoneIndex = want;
     zoneFade = ZONE_FADE;
-    zoneBanner = 150;
     playSfx("zone");
+    pushBanner("ZONE " + (Math.floor(distance / ZONE_LENGTH) + 1),
+               BIOMES[want].name, "", "#FFE066");
   }
   if (zoneFade > 0) zoneFade--;
-  if (zoneBanner > 0) zoneBanner--;
 
   const cur  = BIOMES[zoneIndex];
   const prev = BIOMES[(zoneIndex - 1 + BIOMES.length) % BIOMES.length];
@@ -1357,6 +1688,15 @@ const SHOP = {
     { id: "cape",   name: "Super Suit",   price: 3200, needBest: 3500,
       desc: "Hold to FLY. 12s of flight per run, then it burns down to a Turbo Pack." }
   ],
+  pet: [
+    { id: "none", name: "No Pet",      price: 0,    desc: "Run alone." },
+    { id: "pup",  name: "Coin Pup",    price: 800,
+      desc: "Gathers nearby coins. They pay your wallet, never your score." },
+    { id: "bird", name: "Scout Bird",  price: 1400, needBest: 1500,
+      desc: "Marks fake platforms before you commit. Needs a 1500m record." },
+    { id: "cub",  name: "Spark Cub",   price: 2600, needBest: 2200,
+      desc: "Once a run, a revive costs you no form. Needs a 2200m record." }
+  ],
   trail: [
     { id: "none",   name: "No Trail",    price: 0,    desc: "Clean." },
     { id: "spark",  name: "Sparkle",     price: 200,  desc: "Glittering wake.",  color: "#FFE066" },
@@ -1395,7 +1735,7 @@ function buyItem(slot, item) {
 function defaultSave() {
   return { best: 0, bestScore: 0, bestCombo: 0, totalCoins: 0, runs: 0, bestStage: "RUNNER",
            rank: 1, missionsDone: 0, tier: {},
-           wallet: 0, owned: [], equip: { hat: "none", rocket: "none", trail: "none" },
+           wallet: 0, owned: [], equip: { hat: "none", rocket: "none", trail: "none", pet: "none" },
            name: "", clientId: "" };
 }
 
@@ -1412,8 +1752,8 @@ function loadSave() {
   // balance that reads as lost progress.
   if (typeof save.wallet !== "number") save.wallet = save.totalCoins || 0;
   if (!Array.isArray(save.owned)) save.owned = [];
-  if (!save.equip) save.equip = { hat: "none", rocket: "none", trail: "none" };
-  for (const slot of ["hat", "rocket", "trail"]) {
+  if (!save.equip) save.equip = { hat: "none", rocket: "none", trail: "none", pet: "none" };
+  for (const slot of ["hat", "rocket", "trail", "pet"]) {
     if (!save.equip[slot] || !hasItem(slot, save.equip[slot])) save.equip[slot] = "none";
   }
   // A stable per-browser id, used as this player's leaderboard row key. Only
@@ -1616,7 +1956,7 @@ function finishRun() {
   // CROWN pays into the WALLET only. A coin bonus must never reach score, or
   // a patient player could buy their way up the leaderboard.
   const walletGain = Math.round(stats.runCoins *
-                     (equipped("hat").id === "crown" ? 1.25 : 1));
+                     (equipped("hat").id === "crown" ? 1.25 : 1)) + petCoinBonus;
   save.wallet += walletGain;
   runWalletGain = walletGain;
   newRecord = false;
@@ -1814,9 +2154,35 @@ function scrollWorld() {
   }
 }
 
+const CRUMBLE_FRAMES = 48;   // 0.8s of warning before a platform lets go
+
+/** Advance any lit crumble fuses, and drop the ones that have burned out. */
+function updateCrumbling() {
+  for (const p of platforms) {
+    if (p.crumbleTimer > 0) {
+      p.crumbleTimer--;
+      if (p.crumbleTimer === 0) {
+        p.fallen = true;
+        p.fallVY = 1.5;
+        playSfx("crumble");
+        for (let i = 0; i < 14; i++) {
+          particles.push({
+            x: p.x + rand(0, p.width), y: p.y + rand(0, FLOATING_THICKNESS),
+            vx: rand(-1.5, 1.5), vy: rand(0.5, 2.5),
+            life: randInt(18, 34), size: rand(2, 5), color: "#8A8A8A"
+          });
+        }
+      }
+    }
+    // A collapsed slab keeps falling, so the player SEES what happened rather
+    // than a platform simply blinking out from under them.
+    if (p.fallen) { p.fallVY += 0.6; p.y += p.fallVY; }
+  }
+}
+
 /** Delete anything that has scrolled off the left, and top up the right. */
 function recycleWorld() {
-  platforms = platforms.filter(p => p.x + p.width > -50);
+  platforms = platforms.filter(p => p.x + p.width > -50 && p.y < H + 260);
   coins     = coins.filter(c => c.x > -40 && !c.collected);
   spikes    = spikes.filter(s => s.x + s.size > -40);
   particles = particles.filter(p => p.life > 0);
@@ -1858,6 +2224,25 @@ function checkCollisions() {
     const horizontallyOver = px + PLAYER_W > p.x && px < p.x + p.width;
     if (!horizontallyOver) continue;
 
+    // A fake is scenery. Touching it reveals the trick and drops you through.
+    if (p.fake) {
+      if (!p.revealed && py + PLAYER_H > p.y - 2 && py < p.y + thickness + 12) {
+        p.revealed = 1;
+        playSfx("fake");
+        shake(7);
+        addPopup("FAKE!", "#C792EA");
+        for (let i = 0; i < 16; i++) {
+          particles.push({
+            x: p.x + rand(0, p.width), y: p.y + rand(0, thickness),
+            vx: rand(-2, 2), vy: rand(-2.5, 1),
+            life: randInt(16, 30), size: rand(2, 5), color: "#C792EA"
+          });
+        }
+      }
+      continue;                       // never solid, revealed or not
+    }
+    if (p.fallen) continue;           // a collapsed platform holds nothing
+
     const bottom = py + PLAYER_H;
     const fallingOntoTop =
       player.velocityY >= 0 &&
@@ -1868,6 +2253,11 @@ function checkCollisions() {
     if (fallingOntoTop) {
       player.y = p.y - PLAYER_H;
       player.velocityY = 0;
+      // Standing on a crumbler lights its fuse - once, on first contact.
+      if (p.crumble && p.crumbleTimer < 0) {
+        p.crumbleTimer = CRUMBLE_FRAMES;
+        playSfx("crack");
+      }
       if (player.isJumping) {
         squashTimer = 6;              // squash-on-landing effect
         spawnDust(8, px + PLAYER_W / 2, p.y);
@@ -1956,6 +2346,13 @@ function checkCollisions() {
     if (pu.taken) continue;
     const dx = cx - pu.x, dy = cy - pu.y;
     if (dx * dx + dy * dy < 36 * 36) {
+      if (pu.type === "merchant") {
+        // A purchase the player cannot afford leaves the balloon in place -
+        // taking their coins for nothing, or silently eating the pickup,
+        // would both feel like a bug.
+        if (buyFromMerchant(pu)) pu.taken = true;
+        continue;
+      }
       pu.taken = true;
       activatePower(pu.type);
       if (pu.type === "wings") player.airJumps = 1;
@@ -1979,6 +2376,8 @@ function collectCoin(c) {
 
   stats.runCoins++;
   if (mult > stats.runBestMult) stats.runBestMult = mult;
+  // The Pup's help shows up in the wallet at the end of the run, never here.
+  if (hasPet("pup")) petCoinBonus += 3;
 
   spawnSparkle(c.x, c.y);
   playSfx("coin");
@@ -2119,7 +2518,13 @@ function spendLife(cause) {
 
   // The cost. Without it three lives would simply triple every score.
   combo = 0; comboTimer = 0;
-  if (stage > 0) {
+  if (hasPet("cub") && !cubUsed && stage > 0) {
+    // The Cub does not hand back a life - it spares the FORM, once. A smaller
+    // gift than an extra life, and one that cannot inflate a score on its own.
+    cubUsed = true;
+    addPopup("-1 LIFE  ·  CUB SAVED YOUR FORM", "#C792EA");
+    playSfx("power");
+  } else if (stage > 0) {
     stage--;
     addPopup("-1 LIFE  ·  FORM LOST", "#FF6B6B");
   } else {
@@ -2319,7 +2724,39 @@ function drawPlatforms() {
       ctx.strokeRect(p.x, p.y, p.width, H - p.y);
     } else {
       // Floating stone slab
-      ctx.fillStyle = C.stone;
+      ctx.save();
+
+      // THE FAKE'S TELL. A fake is drawn translucent and drifting gently, so a
+      // player who is paying attention can read it at speed. Without a tell it
+      // would be a memory test rather than a skill, and every death on it
+      // would feel stolen.
+      let fakeLift = 0;
+      if (p.fake) {
+        if (p.revealed) { ctx.restore(); continue; }   // gone once touched
+        ctx.globalAlpha = 0.60 + Math.sin(elapsed * 2.6 + p.x * 0.01) * 0.10;
+        fakeLift = Math.sin(elapsed * 2.2 + p.x * 0.02) * 2.2;
+
+        // The Scout Bird calls it out early. The tell above is always there;
+        // the Bird just lets you read it from further away.
+        if (birdSpotsFakes()) {
+          ctx.save();
+          ctx.globalAlpha = 1;
+          outlinedText("!", p.x + p.width / 2, p.y - 14,
+                       "bold 26px 'Trebuchet MS', sans-serif", "#FF5555", "center", 4);
+          ctx.restore();
+        }
+      }
+
+      // A lit crumbler shakes harder the closer it is to letting go - the
+      // warning gets louder rather than arriving all at once.
+      let shakeX = 0;
+      if (p.crumbleTimer > 0) {
+        const urgency = 1 - p.crumbleTimer / CRUMBLE_FRAMES;
+        shakeX = rand(-1, 1) * (1 + urgency * 3.5);
+      }
+      ctx.translate(shakeX, fakeLift);
+
+      ctx.fillStyle = p.crumble ? "#9A8478" : C.stone;
       ctx.fillRect(p.x, p.y, p.width, FLOATING_THICKNESS);
       ctx.fillStyle = C.stoneLight;
       ctx.fillRect(p.x, p.y, p.width, 5);
@@ -2341,6 +2778,21 @@ function drawPlatforms() {
       ctx.strokeStyle = "#000";
       ctx.lineWidth = 2;
       ctx.strokeRect(p.x, p.y, p.width, FLOATING_THICKNESS);
+
+      // Cracks across a crumbler, so its nature is legible BEFORE you land.
+      if (p.crumble) {
+        ctx.strokeStyle = "rgba(0,0,0,0.55)";
+        ctx.lineWidth = 1.6;
+        const n = Math.max(2, Math.round(p.width / 34));
+        for (let i = 1; i < n; i++) {
+          const cx = p.x + (p.width / n) * i;
+          ctx.beginPath();
+          ctx.moveTo(cx, p.y + 2);
+          ctx.lineTo(cx + (i % 2 ? 4 : -4), p.y + FLOATING_THICKNESS - 2);
+          ctx.stroke();
+        }
+      }
+      ctx.restore();
     }
   }
 }
@@ -2698,7 +3150,61 @@ function drawPowerups() {
     ctx.lineWidth = 2;
     ctx.strokeStyle = "#000";
 
-    if (pu.type === "heart") {
+    if (pu.type === "merchant") {
+      // A balloon carrying a basket. What it sells and what it costs are both
+      // drawn on it, because a decision made at speed has to be readable in a
+      // single glance.
+      const affordable = save.wallet >= MERCHANT_PRICE;
+      ctx.globalAlpha = affordable ? 1 : 0.55;
+
+      ctx.fillStyle = affordable ? "#FF6B9D" : "#7C8B99";
+      ctx.beginPath();
+      ctx.ellipse(0, -12, 20, 24, 0, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle = "rgba(255,255,255,0.35)";
+      ctx.beginPath(); ctx.ellipse(-7, -20, 5, 8, -0.4, 0, Math.PI * 2); ctx.fill();
+
+      ctx.strokeStyle = "#3A2A20"; ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.moveTo(-7, 10); ctx.lineTo(-5, 18);
+      ctx.moveTo(7, 10); ctx.lineTo(5, 18); ctx.stroke();
+      ctx.fillStyle = "#8B5A2B"; ctx.strokeStyle = "#4A2E14"; ctx.lineWidth = 2;
+      ctx.fillRect(-9, 18, 18, 11); ctx.strokeRect(-9, 18, 18, 11);
+
+      // the goods, drawn small inside the balloon
+      ctx.save();
+      ctx.translate(0, -12); ctx.scale(0.52, 0.52);
+      if (pu.goods === "heart") {
+        ctx.fillStyle = "#FF4D6D"; ctx.strokeStyle = "#12202c"; ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(0, 12);
+        ctx.bezierCurveTo(-16, 0, -11, -13, 0, -5);
+        ctx.bezierCurveTo(11, -13, 16, 0, 0, 12);
+        ctx.closePath(); ctx.fill(); ctx.stroke();
+      } else if (pu.goods === "shield") {
+        ctx.fillStyle = "rgba(139,233,253,0.95)"; ctx.strokeStyle = "#12202c"; ctx.lineWidth = 4;
+        ctx.beginPath(); ctx.arc(0, 0, 13, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      } else if (pu.goods === "magnet") {
+        ctx.fillStyle = "#FF5555"; ctx.strokeStyle = "#12202c"; ctx.lineWidth = 4;
+        ctx.beginPath(); ctx.arc(0, 2, 12, Math.PI, 0);
+        ctx.lineTo(12, 12); ctx.lineTo(5, 12); ctx.lineTo(5, 2);
+        ctx.arc(0, 2, 5, 0, Math.PI, true);
+        ctx.lineTo(-5, 12); ctx.lineTo(-12, 12);
+        ctx.closePath(); ctx.fill(); ctx.stroke();
+      } else {
+        ctx.fillStyle = "#BD93F9"; ctx.strokeStyle = "#12202c"; ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(0, -15);
+        ctx.quadraticCurveTo(11, -2, 3, 15);
+        ctx.quadraticCurveTo(-9, -1, 0, -15);
+        ctx.fill(); ctx.stroke();
+      }
+      ctx.restore();
+
+      outlinedText(MERCHANT_PRICE + "c", 0, 44,
+                   "bold 17px 'Trebuchet MS', sans-serif",
+                   affordable ? "#FFE066" : "#FF9F5A", "center", 3);
+      ctx.globalAlpha = 1;
+    } else if (pu.type === "heart") {
       ctx.fillStyle = "#FF4D6D";
       ctx.beginPath();
       ctx.moveTo(0, 12);
@@ -3011,10 +3517,10 @@ function drawShop() {
                "bold 26px 'Trebuchet MS', sans-serif", C.coin);
 
   // Tabs
-  const tabs = [["hat", "HATS"], ["rocket", "PACKS"], ["trail", "TRAILS"]];
+  const tabs = [["hat", "HATS"], ["rocket", "PACKS"], ["pet", "PETS"], ["trail", "TRAILS"]];
   tabs.forEach((t, i) => {
-    const x = 26 + i * 132, on = shopTab === t[0];
-    uiBtn(x, 70, 124, 40, t[1], () => { shopTab = t[0]; }, {
+    const x = 26 + i * 128, on = shopTab === t[0];
+    uiBtn(x, 70, 120, 40, t[1], () => { shopTab = t[0]; }, {
       accent: on ? "#2B6E7F" : "rgba(20,32,44,0.88)",
       border: on ? "#7FD4E6" : "#3d5164",
       color: on ? "#FFFFFF" : "#9FB6C9", font: 18
@@ -3077,6 +3583,14 @@ function drawItemIcon(slot, item, cx, cy) {
     ctx.beginPath(); ctx.moveTo(-9, 9); ctx.lineTo(9, -9); ctx.stroke();
   } else if (slot === "hat") {
     drawHatShape(item.id, 0, 0, 1.25);
+  } else if (slot === "pet") {
+    const save0 = save.equip.pet;
+    save.equip.pet = item.id;
+    petX = 0; petY = 0;
+    const wasStarted = started; started = true;
+    drawPet();
+    started = wasStarted;
+    save.equip.pet = save0;
   } else if (slot === "rocket") {
     if (item.id === "cape") {
       ctx.fillStyle = "#E5384D"; ctx.strokeStyle = "#5A1020";
@@ -3272,6 +3786,12 @@ function drawUI() {
   outlinedText("RANK " + save.rank, W - 18, 68,
                "bold 20px 'Trebuchet MS', sans-serif", "#B9E6FF", "right");
 
+  // --- Level, beside the distance. The difficulty curve made visible. ---
+  const lv = levelOf();
+  outlinedText("LV " + lv, W - 18, 126,
+               "bold 20px 'Trebuchet MS', sans-serif",
+               lv >= 8 ? "#FF6B6B" : (lv >= 5 ? "#FFB86C" : "#7FD4E6"), "right", 3);
+
   // --- Focus mission: only the one closest to done, to avoid HUD clutter ---
   drawFocusMission();
 
@@ -3299,30 +3819,8 @@ function drawUI() {
   // --- Active power-ups, bottom left ---
   drawPowerHud();
 
-  // --- Transformation banner ---
-  if (stageBanner > 0) {
-    const a = Math.min(1, stageBanner / 45);
-    ctx.globalAlpha = a;
-    outlinedText("STAGE " + (stage + 1), W / 2, 150,
-                 "bold 28px 'Trebuchet MS', sans-serif", "#FFFFFF", "center");
-    outlinedText(stageDef().name, W / 2, 200,
-                 "bold 52px 'Trebuchet MS', sans-serif", stageDef().aura, "center");
-    outlinedText(stage === 1 ? "DOUBLE JUMP UNLOCKED"
-                             : "TRIPLE JUMP + HOLD TO GLIDE",
-                 W / 2, 236, "bold 21px 'Trebuchet MS', sans-serif", "#FFFFFF", "center");
-    ctx.globalAlpha = 1;
-  }
-
-  // --- Zone banner ---
-  if (zoneBanner > 0 && started && !gameOver) {
-    const a = Math.min(1, zoneBanner / 40);
-    ctx.globalAlpha = a;
-    outlinedText("ZONE " + (Math.floor(distance / ZONE_LENGTH) + 1),
-                 W / 2, 200, "bold 26px 'Trebuchet MS', sans-serif", "#FFFFFF", "center");
-    outlinedText(pal.name, W / 2, 240,
-                 "bold 40px 'Trebuchet MS', sans-serif", "#FFE066", "center");
-    ctx.globalAlpha = 1;
-  }
+  // Queued announcements - zone, level and evolution, one at a time.
+  drawBanner();
 
   if (!started) drawTitle();
 }
@@ -3336,14 +3834,14 @@ function drawFocusMission() {
     missionProgress(b) / b.target > missionProgress(a) / a.target ? b : a);
 
   const prog = Math.min(m.target, Math.floor(missionProgress(m)));
-  outlinedText(m.text, W - 18, 98, "bold 19px 'Trebuchet MS', sans-serif", "#FFFFFF", "right", 3.5);
+  outlinedText(m.text, W - 18, 156, "bold 19px 'Trebuchet MS', sans-serif", "#FFFFFF", "right", 3.5);
 
   const bw = 170, frac = prog / m.target;
   ctx.fillStyle = "rgba(0,0,0,0.45)";
-  ctx.fillRect(W - 18 - bw, 106, bw, 9);
+  ctx.fillRect(W - 18 - bw, 164, bw, 9);
   ctx.fillStyle = "#50FA7B";
-  ctx.fillRect(W - 18 - bw, 106, bw * frac, 9);
-  outlinedText(prog + "/" + m.target, W - 18, 136,
+  ctx.fillRect(W - 18 - bw, 164, bw * frac, 9);
+  outlinedText(prog + "/" + m.target, W - 18, 194,
                "bold 18px 'Trebuchet MS', sans-serif", "#50FA7B", "right", 3.5);
 }
 
@@ -3531,6 +4029,8 @@ function update(dt) {
 
   updatePlayer();
   updatePowers();
+  updatePet();
+  updateCrumbling();
   scrollWorld();
   recycleWorld();
   checkCollisions();
@@ -3549,6 +4049,8 @@ function update(dt) {
     score += scrollSpeed * 0.1 * stageDef().mult;   // distance component
     stats.runMeters = Math.floor(distance / 10);
     scrollSpeed = targetSpeed();
+    updateLevel();
+    updateBanners();
     updateBiome();
     checkMissions();
 
@@ -3579,6 +4081,7 @@ function render() {
   drawPowerups();
   drawCores();
   drawSpikes();
+  drawPet();
   drawPlayer();
   drawForeground();
   drawParticles();
@@ -3675,7 +4178,9 @@ function restart() {
 
   beatBest = false;
   lives = START_LIVES; reviveFlash = 0; lastLifeWarned = false;
-  stage = 0; cores = []; evolveFlash = 0; stageBanner = 0; coresEarned = 0;
+  shownLevel = 0;
+  bannerQueue = []; banner = null;
+  stage = 0; cores = []; evolveFlash = 0; coresEarned = 0;
   gliding = false;
 
   // TURBO PACK starts the run already evolved. Applied BEFORE the world is
@@ -3683,9 +4188,11 @@ function restart() {
   // actually has rather than retro-fitted to it.
   if (equipped("rocket").id === "turbo" || equipped("rocket").id === "cape") stage = 1;
   flightMeter = FLIGHT_FRAMES; suitBurned = false; flying = false;
+  cubUsed = false; petCoinBonus = 0;
+  petX = PLAYER_X - 46; petY = player.y - 26;
   // HALO starts the run holding a shield.
   power = { magnet: 0, shield: equipped("hat").id === "halo" ? 1 : 0, wings: 0 };
-  zoneIndex = 0; zoneFade = 0; zoneBanner = 0;
+  zoneIndex = 0; zoneFade = 0;
   updateBiome();
 
   resetRunStats();

@@ -1,8 +1,8 @@
 {
   "id": "endless-runner",
   "name": "Turbo Dash",
-  "version": "5.0.0",
-  "description": "A colorful endless runner platformer. Three lives, mid-run evolution into a double jump and glide, a coin shop with hats, packs and a flying Super Suit, and a live shared leaderboard. Keyboard and touch.",
+  "version": "6.0.0",
+  "description": "A colorful endless runner platformer across ten named difficulty levels. Dodge crumbling and fake platforms, evolve mid-run, spend coins at a merchant balloon without breaking stride, keep a pet, and chase a live shared leaderboard.",
   "author": "CaisoGames AI Team",
   "genre": "Endless Runner Platformer",
   "tags": [
@@ -53,7 +53,14 @@
     "Reviving COSTS an evolution stage and the coin combo, which is what keeps scores comparable",
     "Rare heart pickups that appear more often the closer you are to losing",
     "Final-life tension: a pulsing red vignette kept to the screen edges so hazards stay readable",
-    "Super Suit: hold to fly on a per-run flight budget that only drains while held, then burns down to a Turbo Pack"
+    "Super Suit: hold to fly on a per-run flight budget that only drains while held, then burns down to a Turbo Pack",
+    "Ten named difficulty levels, each announcing the hazard it introduces",
+    "Crumbling platforms (level 3+) that shake, crack and collapse 0.8s after you land",
+    "Fake platforms (level 5+) placed as DECOYS in wide gaps, never on the route itself",
+    "Fakes carry a visible tell (translucent and drifting) so reading them is a skill, not a memory test",
+    "Merchant balloon: mid-run spending as a single jump-and-touch, with no menu and no pause",
+    "Pets: Coin Pup (wallet-only coin gathering), Scout Bird (marks fakes), Spark Cub (spares one revive penalty)",
+    "A single banner queue, so zone, level and evolution announcements never overwrite each other"
   ],
   "stats": {
     "playtime": "1-5 minutes per run",
@@ -74,7 +81,10 @@
       "Coin economy and cosmetics",
       "Leaderboard chasing",
       "Lives and revives",
-      "Suit flight budgeting"
+      "Suit flight budgeting",
+      "Hazard reading",
+      "Mid-run purchasing",
+      "Pet companions"
     ],
     "unique": [
       "Missions pay out a visible ability rather than an abstract score bonus",
@@ -83,32 +93,73 @@
       "Gaps sized from each form's measured physics, not an estimate",
       "Shop perks are designed so buying power cannot buy leaderboard position",
       "A revive costs a form and the combo, so three lives inflate scores x1.78 rather than the naive x3",
-      "Flight is a total budget per run, making WHEN to spend it the decision rather than whether to hold"
+      "Flight is a total budget per run, making WHEN to spend it the decision rather than whether to hold",
+      "Fake platforms are opt-in bait beside the route, so a trap is never a coin flip",
+      "Mid-run shopping is a pickup rather than a menu, because a menu would stop the run",
+      "Pets may ease the run or fatten the wallet, but never inflate the score"
     ]
   },
   "difficulty": {
-    "type": "gradual_distance_based",
-    "tiers": [
+    "type": "ten_named_levels",
+    "span": "300m per level, capped at level 10",
+    "principle": "One new hazard per level, never two, so there is always a stretch to learn each.",
+    "levels": [
       {
-        "name": "Meadow",
-        "distance": "0-700m",
-        "description": "Wide platforms, generous gaps, no spikes for the first 400m"
+        "n": 1,
+        "name": "WARM UP",
+        "adds": ""
       },
       {
-        "name": "Sunset Ridge",
-        "distance": "700-1400m",
-        "description": "Floating platforms, spikes, first power-ups"
+        "n": 2,
+        "name": "STEPPING UP",
+        "adds": "Floating platforms"
       },
       {
-        "name": "Midnight",
-        "distance": "1400-2100m",
-        "description": "Faster scroll, tighter gaps, staircase climbs"
+        "n": 3,
+        "name": "CRUMBLE",
+        "adds": "Crumbling platforms"
       },
       {
-        "name": "Frost Peaks",
-        "distance": "2100m+",
-        "description": "Near top speed, maximum gap ratio, frequent spikes"
+        "n": 4,
+        "name": "SPIKE ALLEY",
+        "adds": "More spikes"
+      },
+      {
+        "n": 5,
+        "name": "MIRAGE",
+        "adds": "Fake platforms"
+      },
+      {
+        "n": 6,
+        "name": "FAST LANE",
+        "adds": "Tighter gaps"
+      },
+      {
+        "n": 7,
+        "name": "HIGH WIRE",
+        "adds": "Narrower platforms"
+      },
+      {
+        "n": 8,
+        "name": "DOUBLE TROUBLE",
+        "adds": "More fakes and crumbles"
+      },
+      {
+        "n": 9,
+        "name": "GAUNTLET",
+        "adds": "Everything, faster"
+      },
+      {
+        "n": 10,
+        "name": "TURBO HELL",
+        "adds": "Maximum difficulty"
       }
+    ],
+    "biomes": [
+      "Meadow",
+      "Sunset Ridge",
+      "Midnight",
+      "Frost Peaks"
     ]
   },
   "createdAt": "2026-09-08",
@@ -170,9 +221,16 @@
       "hearts restore a life, are capped, and get likelier only when the player is in trouble",
       "suit flight: holding lifts, releasing drops, the tank drains only while held",
       "flight cannot leave the top of the world or farm the big-air bonus",
-      "the suit burns out into the pack below it and normal jumping returns"
+      "the suit burns out into the pack below it and normal jumping returns",
+      "ten levels, capped, each introducing one hazard and never two",
+      "fakes never catch the player and reveal themselves on contact",
+      "crumblers hold first, warn, then collapse and hold nothing",
+      "the real route is traversable ignoring every fake platform",
+      "merchant buys deduct and grant; a refused purchase changes nothing",
+      "pets never add to score, and the Cub spares one revive penalty per run",
+      "zone, level and evolution banners queue instead of overlapping"
     ],
-    "checks": 81
+    "checks": 118
   },
   "progression": {
     "type": "in-run evolution",
@@ -205,6 +263,7 @@
     "slots": [
       "hat",
       "rocket",
+      "pet",
       "trail"
     ],
     "designRule": "Nothing sold may inflate a score. Coin bonuses pay the wallet only; the slow pack reduces scoring rate as well as difficulty; the strongest two items additionally require a distance record, because a price tag gates patience rather than skill.",
@@ -271,6 +330,26 @@
         "price": 3200,
         "needBest": 3500,
         "effect": "Hold to fly, 12s of flight per run, then burns out into the Turbo Pack"
+      },
+      {
+        "slot": "pet",
+        "id": "pup",
+        "price": 800,
+        "effect": "Gathers coins; they pay the wallet, never the score"
+      },
+      {
+        "slot": "pet",
+        "id": "bird",
+        "price": 1400,
+        "needBest": 1500,
+        "effect": "Marks fake platforms early"
+      },
+      {
+        "slot": "pet",
+        "id": "cub",
+        "price": 2600,
+        "needBest": 2200,
+        "effect": "Once a run, a revive costs no evolution stage"
       }
     ]
   },
@@ -305,5 +384,11 @@
     "reviveCost": "One evolution stage and the entire coin combo",
     "measuredInflation": "x1.78 average score vs a single life, against a naive expectation of x3",
     "hearts": "Rare pickups. Spawn chance is 0 at full health and rises to ~9% per platform on the last life."
+  },
+  "merchant": {
+    "price": 60,
+    "form": "A balloon on the track, reached with a deliberate jump",
+    "rationale": "A mid-run menu would stop the run and, on a phone, appear under a finger already held down to jump. A priced pickup keeps the decision without breaking stride.",
+    "goods": "Shown on the balloon before you commit; hearts are only offered when lives are missing."
   }
 }
