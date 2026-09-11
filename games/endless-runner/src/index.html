@@ -431,6 +431,8 @@ function releaseJump() {
  */
 function tryJump() {
   if (jumpBuffer <= 0) return;
+  // While the suit can fly, holding IS the control: a jump would fight it.
+  if (hasSuit()) { jumpBuffer = 0; return; }
 
   const grounded = player.grounded || coyoteFrames > 0;
 
@@ -713,6 +715,9 @@ function playSfx(name) {
     // The transformation sting: a long rising sweep, the loudest cue here.
     case "evolve": tone(330, 0.55, "square",   0.20, 1760); break;
     case "buy":    tone(880, 0.16, "triangle", 0.18, 1320); break;
+    case "heart":  tone(680, 0.20, "triangle", 0.18, 1020); break;
+    case "hurt":   tone(260, 0.32, "sawtooth", 0.20, 90);   break;
+    case "lastLife": tone(180, 0.45, "square",  0.20, 120);  break;
     case "deny":   tone(200, 0.16, "square",   0.14, 140);  break;
     case "click":  tone(660, 0.06, "triangle", 0.10);       break;
   }
@@ -924,6 +929,15 @@ function decoratePlatform(plat, wantsSpike) {
       // An arc lifts the middle coins so the player must jump through them.
       const lift = arc ? Math.sin((i / (count - 1)) * Math.PI) * 45 : 0;
       coins.push({ x: x, y: plat.y - 42 - lift, collected: false });
+    }
+  }
+
+  // --- Heart: rare, and rarer still while the player is healthy. ---
+  if (plat.width > 150 && Math.random() < heartChance()) {
+    const hx = plat.x + plat.width * rand(0.3, 0.7);
+    if (spikeX === null || Math.abs(hx - spikeX) > 70) {
+      powerups.push({ x: hx, y: plat.y - 64, type: "heart",
+                      taken: false, bob: Math.random() * Math.PI * 2 });
     }
   }
 
@@ -1148,6 +1162,21 @@ function powerChance() {
 }
 
 function activatePower(type) {
+  if (type === "heart") {
+    // Hearts stop spawning at the cap, but a straggler already in the world
+    // must still do something rather than vanishing for nothing.
+    if (lives < MAX_LIVES) {
+      lives++;
+      addPopup("+1 LIFE", "#FF6B8A");
+      if (lives > 1) lastLifeWarned = false;
+    } else {
+      addScore(250);
+      addPopup("LIVES FULL  +250", "#FF6B8A");
+    }
+    playSfx("heart");
+    shake(6);
+    return;
+  }
   playSfx("power");
   shake(5);
   if (type === "magnet") {
@@ -1169,6 +1198,7 @@ function updatePowers() {
   if (power.wings  > 0) power.wings--;
   if (invuln > 0) invuln--;
   if (evolveFlash > 0) evolveFlash--;
+  if (reviveFlash > 0) reviveFlash--;
   if (stageBanner > 0) stageBanner--;
 
   // Magnet: drag nearby uncollected coins toward the player.
@@ -1345,7 +1375,9 @@ const SHOP = {
     { id: "mini",   name: "Mini Booster",price: 700,
       desc: "World runs 8% slower. Easier to read - but you score slower too." },
     { id: "turbo",  name: "Turbo Pack",  price: 2400, needBest: 2500,
-      desc: "Begin every run already WINGED. Needs a 2500m record." }
+      desc: "Begin every run already WINGED. Needs a 2500m record." },
+    { id: "cape",   name: "Super Suit",   price: 3200, needBest: 3500,
+      desc: "Hold to FLY. 12s of flight per run, then it burns down to a Turbo Pack." }
   ],
   trail: [
     { id: "none",   name: "No Trail",    price: 0,    desc: "Clean." },
@@ -1675,6 +1707,26 @@ function updatePlayer() {
     holdFrames--;
   }
 
+  // FLIGHT (Super Suit). Takes priority over jumping and gliding: while the
+  // suit has charge, holding is flight, not a jump.
+  flying = hasSuit() && jumpHeld && flightMeter > 0 && !gameOver;
+  if (flying) {
+    // Ease toward a steady climb rather than snapping to it, so the ascent
+    // reads as a smooth lift rather than a teleport.
+    player.velocityY += (FLY_RISE - player.velocityY) * FLY_EASE;
+    flightMeter--;
+    airFrames = 0;            // flying must not farm the big-air bonus
+    player.airJumps = maxAirJumps();
+    if (Math.floor(elapsed * 60) % 3 === 0) {
+      particles.push({
+        x: PLAYER_X + rand(4, PLAYER_W - 4), y: player.y + PLAYER_H,
+        vx: rand(-1.2, 0.2), vy: rand(0.6, 2.0),
+        life: randInt(12, 22), size: rand(2, 5), color: "#9FD8FF"
+      });
+    }
+    if (flightMeter === 0) burnOutSuit();
+  }
+
   // GLIDE (stage 3 only)
   // --------------------
   // Once every jump is spent, holding the button feathers the descent instead
@@ -1682,17 +1734,27 @@ function updatePlayer() {
   // time - so it extends a committed jump rather than replacing the skill of
   // aiming one. Mechanically it is the reward for reaching BLAZE: the same
   // gaps are now crossable with a slower, more deliberate line.
-  gliding = stageDef().glide && jumpHeld && !player.grounded &&
+  gliding = !flying && stageDef().glide && jumpHeld && !player.grounded &&
             player.velocityY > 0 && player.airJumps <= 0;
 
   // Asymmetric gravity: float up, drop fast. See the GRAVITY constants.
-  const g = player.velocityY < 0 ? GRAVITY : (gliding ? GRAVITY_FALL * 0.30 : GRAVITY_FALL);
+  // Flight supplies its own vertical motion, so gravity steps aside for it.
+  const g = flying ? 0
+                   : (player.velocityY < 0 ? GRAVITY
+                                           : (gliding ? GRAVITY_FALL * 0.30 : GRAVITY_FALL));
   player.velocityY += g;
 
   const cap = gliding ? 3.2 : MAX_FALL_SPEED;
   if (player.velocityY > cap) player.velocityY = cap;
 
   player.y += player.velocityY;
+
+  // The world has no sky above this line; flying into it would take the player
+  // off-screen with no way to judge where they are.
+  if (player.y < FLY_CEIL) {
+    player.y = FLY_CEIL;
+    if (player.velocityY < 0) player.velocityY = 0;
+  }
 
   if (gliding && elapsed * 60 % 4 < 1) {
     // A thin trail of embers so the glide reads as an ability, not a bug.
@@ -1705,7 +1767,9 @@ function updatePlayer() {
 
   if (squashTimer > 0) squashTimer--;
   if (jumpBuffer > 0) jumpBuffer--;
-  if (!player.grounded) airFrames++;
+  // Flight is not hang time: it must not accumulate toward the big-air bonus,
+  // or a long glide across the sky would pay out like a daring jump.
+  if (!player.grounded && !flying) airFrames++;
 
   // A coin streak lapses if the player goes too long without picking one up.
   if (comboTimer > 0) {
@@ -1968,11 +2032,142 @@ function addPopup(text, color) {
   });
 }
 
+/* ---------------------------------------------------------------------------
+   LIVES
+   ----------------------------------------------------------------------------
+   A run starts with three lives and can hold five. Hearts appear rarely, and
+   deliberately MORE often the closer the player is to losing - rubber-banding
+   that rescues a failing run without littering a good one.
+
+   The important design decision here is that a revive COSTS something.
+
+   Three lives roughly triples how long a run survives, which would have
+   tripled every score and made the existing leaderboard meaningless. So
+   dying drops the player's evolution one stage and wipes the coin combo.
+   A clean run therefore still beats a messy one that travelled the same
+   distance, and the board keeps meaning what it meant before.
+   ------------------------------------------------------------------------ */
+
+/* --- SUPER SUIT ------------------------------------------------------------
+   Hold to rise, release to drop. The flight budget is a TOTAL for the run
+   rather than a refilling meter, and it only drains while you are actually
+   holding - which turns the suit from "skip the first twelve seconds" into a
+   resource you have to decide when to spend. Save it for a bad patch, or burn
+   it early and fly the opening; both are real choices.
+
+   When the budget is gone the suit burns out into the Turbo Pack it sits
+   above, so the run continues with the weaker power rather than simply losing
+   an item mid-flight.
+   -------------------------------------------------------------------------- */
+
+const FLIGHT_FRAMES = 720;   // 12 seconds of held flight
+const FLY_RISE = -3.0;       // the slow, deliberate climb speed
+const FLY_EASE = 0.18;       // how quickly it settles into that climb
+const FLY_CEIL = 18;         // never let the player leave the top of the world
+
+let flightMeter;
+let suitBurned;
+let flying;
+
+function hasSuit() { return equipped("rocket").id === "cape" && !suitBurned; }
+
+function burnOutSuit() {
+  suitBurned = true;
+  flying = false;
+  addPopup("SUIT BURNED OUT", "#FF9F5A");
+  playSfx("shieldBreak");
+  shake(8);
+}
+
+const START_LIVES = 3;
+const MAX_LIVES   = 5;
+const REVIVE_INVULN = 110;   // ~1.8s of mercy after being put back down
+
+let lives;
+let reviveFlash;      // frames of the white "you were saved" flash
+let lastLifeWarned;   // so the final-life sting only fires once
+
+function heartChance() {
+  if (lives >= MAX_LIVES) return 0;
+  // Rare at full health, several times likelier when in real trouble.
+  const deficit = MAX_LIVES - lives;          // 1 .. 4
+  return Math.min(0.09, 0.011 * deficit * (lives <= 1 ? 2.2 : 1));
+}
+
+/**
+ * Put the player back on solid ground after a fall.
+ *
+ * Simply dropping them back in place would be a death sentence - the hole they
+ * fell into is still there. Instead the world is slid forward until a platform
+ * with real landing room sits under them, so a revive always lands somewhere
+ * survivable. Distance is NOT credited for the skipped span: being rescued
+ * should never pay.
+ */
+function reviveOnSafeGround() {
+  let target = null;
+  for (const p of platforms) {
+    if (p.width >= 130 && p.x + p.width > PLAYER_X + 120) { target = p; break; }
+  }
+  if (!target) {
+    generatePlatform();
+    target = platforms[platforms.length - 1];
+  }
+  if (!target) return;
+
+  const dx = (target.x + 30) - PLAYER_X;
+  if (dx > 0) {
+    for (const p of platforms) p.x -= dx;
+    for (const c of coins)     c.x -= dx;
+    for (const sp of spikes)   sp.x -= dx;
+    for (const pu of powerups) pu.x -= dx;
+    for (const co of cores)    co.x -= dx;
+  }
+  // Clear anything hostile from the landing zone itself.
+  spikes = spikes.filter(sp => !(sp.x > PLAYER_X - 90 && sp.x < PLAYER_X + 180));
+
+  player.y = target.y - PLAYER_H - 50;
+  player.velocityY = 0;
+  player.grounded = false;
+  player.isJumping = true;
+  player.airJumps = maxAirJumps();
+}
+
+/** Spend a life instead of ending the run. Returns true if the run continues. */
+function spendLife(cause) {
+  lives--;
+  invuln = REVIVE_INVULN;
+  reviveFlash = 18;
+  hitStop = 10;
+  shake(16);
+  playSfx("hurt");
+
+  // The cost. Without it three lives would simply triple every score.
+  combo = 0; comboTimer = 0;
+  if (stage > 0) {
+    stage--;
+    addPopup("-1 LIFE  ·  FORM LOST", "#FF6B6B");
+  } else {
+    addPopup("-1 LIFE", "#FF6B6B");
+  }
+  player.airJumps = maxAirJumps();
+
+  if (cause === "fall") reviveOnSafeGround();
+
+  // The final life gets its own announcement, once.
+  if (lives === 1 && !lastLifeWarned) {
+    lastLifeWarned = true;
+    addPopup("LAST LIFE!", "#FF3B3B");
+    playSfx("lastLife");
+  }
+  return true;
+}
+
 function die(cause) {
   if (gameOver) return;
+  if (invuln > 0 && cause !== "fall") return;   // mercy window after a revive
 
   // A shield eats one hit instead of ending the run. Falling into a pit is
-  // never survivable - there is no ground left to put the player back on.
+  // never survivable by a shield - there is no ground left to stand on.
   if (cause === "spike" && power.shield > 0) {
     power.shield = 0;
     invuln = 90;
@@ -1983,6 +2178,10 @@ function die(cause) {
     return;
   }
 
+  // Lives are spent before the run is allowed to end.
+  if (lives > 1) { spendLife(cause); return; }
+
+  lives = 0;
   gameOver = true;
   player.isAlive = false;
   deathCause = cause;
@@ -2305,7 +2504,24 @@ function drawPlayer() {
   const y = player.y + bob + squash;
 
   // Equipped pack rides on the character's back, behind the body.
-  if (equipped("rocket").id !== "none") {
+  if (equipped("rocket").id === "cape") {
+    // A cape, streaming further back the faster the world moves and flaring
+    // wide while actually flying.
+    const spread = flying ? 1.5 : 1;
+    ctx.save();
+    ctx.translate(x + w * 0.22, y + h * 0.22);
+    ctx.fillStyle = suitBurned ? "#7A4A55" : "#E5384D";
+    ctx.strokeStyle = "#5A1020";
+    ctx.lineWidth = 2;
+    const wave = Math.sin(elapsed * 12) * 3;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.quadraticCurveTo(-18 * spread, 10 + wave, -13 * spread, 30 * spread + wave);
+    ctx.lineTo(2, 20);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    ctx.restore();
+  } else if (equipped("rocket").id !== "none") {
     drawRocketShape(equipped("rocket").id, x + w * 0.5 - 13, y + h * 0.52, 0.95);
   }
 
@@ -2507,7 +2723,16 @@ function drawPowerups() {
     ctx.lineWidth = 2;
     ctx.strokeStyle = "#000";
 
-    if (pu.type === "magnet") {
+    if (pu.type === "heart") {
+      ctx.fillStyle = "#FF4D6D";
+      ctx.beginPath();
+      ctx.moveTo(0, 12);
+      ctx.bezierCurveTo(-16, 0, -11, -13, 0, -5);
+      ctx.bezierCurveTo(11, -13, 16, 0, 0, 12);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = "rgba(255,255,255,0.75)";
+      ctx.beginPath(); ctx.ellipse(-5, -4, 3, 2, -0.5, 0, Math.PI * 2); ctx.fill();
+    } else if (pu.type === "magnet") {
       // Horseshoe magnet: red arc with two grey pole tips.
       ctx.fillStyle = "#FF5555";
       ctx.beginPath();
@@ -2878,7 +3103,19 @@ function drawItemIcon(slot, item, cx, cy) {
   } else if (slot === "hat") {
     drawHatShape(item.id, 0, 0, 1.25);
   } else if (slot === "rocket") {
-    drawRocketShape(item.id, 0, 0, 1.25);
+    if (item.id === "cape") {
+      ctx.fillStyle = "#E5384D"; ctx.strokeStyle = "#5A1020";
+      ctx.beginPath();
+      ctx.moveTo(-4, -12); ctx.lineTo(6, -12);
+      ctx.quadraticCurveTo(14, 2, 8, 14); ctx.lineTo(-8, 14);
+      ctx.quadraticCurveTo(-13, 2, -4, -12);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = "#FFE066";
+      ctx.font = "bold 11px sans-serif"; ctx.textAlign = "center";
+      ctx.fillText("S", 0, 4);
+    } else {
+      drawRocketShape(item.id, 0, 0, 1.25);
+    }
   } else {
     // Trail: a short streak of its particles.
     for (let i = 0; i < 6; i++) {
@@ -3027,6 +3264,31 @@ function drawUI() {
   outlinedText(String(coinCount), coinLabelX, 76,
                "bold 23px 'Trebuchet MS', sans-serif", C.coin);
 
+  // --- Lives, as hearts. Drawn full then hollow, so the number you have
+  //     LOST is visible too - that is what creates the pressure. ---
+  for (let i = 0; i < MAX_LIVES; i++) {
+    const hx = 24 + i * 26, hy = 104, full = i < lives;
+    ctx.save();
+    ctx.translate(hx, hy);
+    ctx.scale(0.62, 0.62);
+    // the last remaining heart pulses
+    if (full && lives === 1) {
+      const b = 1 + Math.sin(elapsed * 9) * 0.16;
+      ctx.scale(b, b);
+    }
+    ctx.beginPath();
+    ctx.moveTo(0, 12);
+    ctx.bezierCurveTo(-16, 0, -11, -13, 0, -5);
+    ctx.bezierCurveTo(11, -13, 16, 0, 0, 12);
+    ctx.closePath();
+    ctx.fillStyle = full ? (lives === 1 ? "#FF3B3B" : "#FF4D6D") : "rgba(0,0,0,0.34)";
+    ctx.fill();
+    ctx.lineWidth = 2.6;
+    ctx.strokeStyle = full ? "#7A1028" : "rgba(255,255,255,0.30)";
+    ctx.stroke();
+    ctx.restore();
+  }
+
   // --- Best + rank, top right ---
   if (save.bestScore > 0) {
     outlinedText("BEST " + save.bestScore.toLocaleString(), W - 18, 40,
@@ -3138,6 +3400,10 @@ function drawPowerHud() {
   if (power.shield > 0) items.push({ c: "#8BE9FD", label: "SHIELD", frac: 1 });
   if (power.magnet > 0) items.push({ c: "#FF79C6", label: "MAGNET", frac: power.magnet / MAGNET_FRAMES });
   if (power.wings  > 0) items.push({ c: "#BD93F9", label: "WINGS",  frac: power.wings / WINGS_FRAMES });
+  if (equipped("rocket").id === "cape" && !suitBurned) {
+    items.push({ c: flightMeter / FLIGHT_FRAMES < 0.25 ? "#FF6B6B" : "#9FD8FF",
+                 label: "FLIGHT", frac: flightMeter / FLIGHT_FRAMES });
+  }
 
   let y = H - 26 - (items.length - 1) * 34;
   for (const it of items) {
@@ -3169,6 +3435,11 @@ function drawTitle() {
                          : "Hold the key down to jump higher",
                W / 2, 352, "bold 20px 'Trebuchet MS', sans-serif", "#B9E6FF", "center");
 
+  if (equipped("rocket").id === "cape") {
+    outlinedText("SUPER SUIT: hold to fly", W / 2, 378,
+                 "bold 17px 'Trebuchet MS', sans-serif", "#9FD8FF", "center", 3);
+  }
+
   uiBtn(W / 2 - 210, 386, 200, 50, "SHOP", openShop,
         { accent: "#2F6B3A", border: "#50FA7B" });
   uiBtn(W / 2 + 10, 386, 200, 50, "LEADERBOARD", openBoard,
@@ -3184,7 +3455,7 @@ function drawGameOver(meters) {
   ctx.fillStyle = "rgba(0,0,0,0.74)";
   ctx.fillRect(0, 0, W, H);
 
-  outlinedText(newRecord ? "NEW RECORD!" : "GAME OVER", W / 2, 92,
+  outlinedText(newRecord ? "NEW RECORD!" : "OUT OF LIVES", W / 2, 92,
                "bold 46px 'Trebuchet MS', sans-serif",
                newRecord ? "#50FA7B" : "#FF4136", "center");
 
@@ -3341,6 +3612,28 @@ function render() {
   drawPopups();
   ctx.restore();
 
+  // FINAL LIFE. A red pulse around the edges of the screen, strong enough to
+  // change how the last life FEELS without ever obscuring the platforms. This
+  // is what stops three lives from being merely three attempts.
+  if (started && !gameOver && lives === 1) {
+    // Kept to the edges and well under half opacity: spikes are red, and the
+    // last life is exactly the wrong moment to make a hazard harder to read.
+    const beat = 0.20 + Math.abs(Math.sin(elapsed * 3.1)) * 0.22;
+    const vg = ctx.createRadialGradient(W / 2, H / 2, H * 0.52, W / 2, H / 2, H * 0.95);
+    vg.addColorStop(0, "rgba(255,0,40,0)");
+    vg.addColorStop(1, "rgba(255,0,40," + beat.toFixed(3) + ")");
+    ctx.fillStyle = vg;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  // A revive is a rescue, so it gets a bright flash rather than a grim one.
+  if (reviveFlash > 0) {
+    ctx.globalAlpha = Math.min(0.7, reviveFlash / 18);
+    ctx.fillStyle = "#FFFFFF";
+    ctx.fillRect(0, 0, W, H);
+    ctx.globalAlpha = 1;
+  }
+
   // Transformation white-out. Drawn over the world but under the HUD so the
   // score stays readable through the flash.
   if (evolveFlash > 0) {
@@ -3408,13 +3701,15 @@ function restart() {
   shakeAmount = 0; hitStop = 0; invuln = 0;
 
   beatBest = false;
+  lives = START_LIVES; reviveFlash = 0; lastLifeWarned = false;
   stage = 0; cores = []; evolveFlash = 0; stageBanner = 0; coresEarned = 0;
   gliding = false;
 
   // TURBO PACK starts the run already evolved. Applied BEFORE the world is
   // seeded, so the opening platforms are sized for the form the player
   // actually has rather than retro-fitted to it.
-  if (equipped("rocket").id === "turbo") stage = 1;
+  if (equipped("rocket").id === "turbo" || equipped("rocket").id === "cape") stage = 1;
+  flightMeter = FLIGHT_FRAMES; suitBurned = false; flying = false;
   // HALO starts the run holding a shield.
   power = { magnet: 0, shield: equipped("hat").id === "halo" ? 1 : 0, wings: 0 };
   zoneIndex = 0; zoneFade = 0; zoneBanner = 0;

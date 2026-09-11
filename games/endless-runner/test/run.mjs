@@ -442,5 +442,126 @@ console.log('\nBoard: your own row is never lost:');
   await browser.close();
 }
 
+// 12. LIVES. Three lives roughly triple how long a run lasts, which would
+//     have tripled every score and made the existing leaderboard meaningless.
+//     The revive cost is what keeps the board comparable, so it is tested as
+//     carefully as the lives themselves.
+console.log('\nLives:');
+{
+  const { browser, page } = await open(webkit, TARGETS[0].ctx);
+  const e = await page.evaluate(() => {
+    const o = {};
+    restart(); started = true;
+    o.runStartsWithThree = lives === 3;
+
+    player.y = H + 200; checkCollisions();
+    o.aFallSpendsALifeNotTheRun = lives === 2 && !gameOver;
+    o.reviveLandsOnSolidGround = player.y < H && isFinite(player.y);
+    o.reviveGrantsAMercyWindow = invuln > 0;
+
+    // The cost.
+    restart(); started = true; evolve(); evolve(); combo = 9;
+    const st = stage;
+    player.y = H + 200; checkCollisions();
+    o.reviveCostsAnEvolutionStage = stage === st - 1;
+    o.reviveWipesTheComboStreak = combo === 0;
+
+    restart(); started = true;
+    player.y = H + 200; checkCollisions();
+    o.stageNeverFallsBelowBase = stage === 0;
+
+    restart(); started = true; lives = 1;
+    player.y = H + 200; checkCollisions();
+    o.theLastLifeReallyEndsTheRun = gameOver && lives === 0;
+
+    // Hearts, and the rubber-banding that decides when they appear.
+    restart(); started = true; lives = 2;
+    powerups.length = 0;
+    powerups.push({ x: PLAYER_X + PLAYER_W / 2, y: player.y + PLAYER_H / 2,
+                    type: 'heart', taken: false, bob: 0 });
+    checkCollisions();
+    o.aHeartRestoresALife = lives === 3;
+
+    lives = MAX_LIVES;
+    powerups.length = 0;
+    powerups.push({ x: PLAYER_X + PLAYER_W / 2, y: player.y + PLAYER_H / 2,
+                    type: 'heart', taken: false, bob: 0 });
+    const sc = score; checkCollisions();
+    o.livesAreCappedAndPayPointsInstead = lives === MAX_LIVES && score > sc;
+
+    lives = MAX_LIVES; const full = heartChance();
+    lives = 3; const mid = heartChance();
+    lives = 1; const low = heartChance();
+    o.noHeartsWhileHealthy = full === 0;
+    o.heartsGetLikelierInTrouble = low > mid && mid > 0 && low <= 0.09;
+
+    restart();
+    o.livesResetEachRun = lives === 3;
+    return o;
+  });
+  for (const [k, v] of Object.entries(e)) ok(v === true, k);
+  await browser.close();
+}
+
+// 13. SUPER SUIT. Hold to fly, on a budget that only drains while held, so the
+//     decision is WHEN to spend it rather than whether to hold the button.
+console.log('\nSuper Suit:');
+{
+  const { browser, page } = await open(webkit, TARGETS[0].ctx);
+  const e = await page.evaluate(() => {
+    const o = {};
+    const suit = SHOP.rocket[3];
+    save.wallet = 99999; save.best = 0;
+    o.moneyAloneCannotUnlockTheSuit = lockReason('rocket', suit) !== null;
+    save.best = 9999; buyItem('rocket', suit);
+
+    restart(); started = true;
+    o.startsWithAFullTank = flightMeter === FLIGHT_FRAMES && !suitBurned;
+
+    player.y = 300; player.velocityY = 0; player.grounded = false; jumpHeld = true;
+    const y0 = player.y;
+    for (let i = 0; i < 30; i++) updatePlayer();
+    o.holdingLiftsThePlayer = player.y < y0;
+    o.theClimbIsSlowNotExplosive = player.velocityY < 0 && player.velocityY > FLY_RISE - 0.5;
+
+    jumpHeld = false; const y1 = player.y;
+    for (let i = 0; i < 20; i++) updatePlayer();
+    o.releasingDrops = player.y > y1;
+
+    // The budget is the whole design: it must not tick away while idle.
+    restart(); started = true; jumpHeld = false; player.grounded = false;
+    for (let i = 0; i < 60; i++) updatePlayer();
+    o.tankHoldsSteadyWhenNotFlying = flightMeter === FLIGHT_FRAMES;
+    jumpHeld = true;
+    for (let i = 0; i < 60; i++) updatePlayer();
+    o.tankDrainsOnlyWhileHeld = flightMeter === FLIGHT_FRAMES - 60;
+
+    restart(); started = true; jumpHeld = true; player.grounded = false; player.y = 100;
+    for (let i = 0; i < 200; i++) updatePlayer();
+    o.cannotFlyOffTheTopOfTheWorld = player.y >= FLY_CEIL - 0.01;
+    o.flightDoesNotFarmTheBigAirBonus = airFrames === 0;
+
+    // Burn-out drops to the pack below rather than removing the item.
+    restart(); started = true; jumpHeld = true; player.grounded = false;
+    for (let i = 0; i < FLIGHT_FRAMES + 40; i++) updatePlayer();
+    o.burnsOutWhenTheTankIsEmpty = suitBurned && flightMeter === 0;
+    o.stopsFlyingOnceBurnedOut = flying === false;
+    player.grounded = true; player.velocityY = 0; jumpBuffer = 5; jumpHeld = true;
+    tryJump();
+    o.normalJumpingReturnsAfterBurnout = player.velocityY === JUMP_STRENGTH;
+
+    save.equip.rocket = 'none'; restart(); started = true;
+    player.grounded = false; player.y = 300; player.velocityY = 0; jumpHeld = true;
+    const y2 = player.y;
+    for (let i = 0; i < 20; i++) updatePlayer();
+    o.withoutTheSuitNothingFlies = player.y > y2 && flying === false;
+
+    save.equip.rocket = 'none'; restart();
+    return o;
+  });
+  for (const [k, v] of Object.entries(e)) ok(v === true, k);
+  await browser.close();
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

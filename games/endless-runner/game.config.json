@@ -1,8 +1,8 @@
 {
   "id": "endless-runner",
   "name": "Turbo Dash",
-  "version": "4.1.0",
-  "description": "A colorful endless runner platformer. Evolve mid-run to unlock the double jump and glide, spend coins in the shop on hats, packs and trails, and chase a live shared leaderboard. Keyboard and touch.",
+  "version": "5.0.0",
+  "description": "A colorful endless runner platformer. Three lives, mid-run evolution into a double jump and glide, a coin shop with hats, packs and a flying Super Suit, and a live shared leaderboard. Keyboard and touch.",
   "author": "CaisoGames AI Team",
   "genre": "Endless Runner Platformer",
   "tags": [
@@ -48,7 +48,12 @@
     "Item effects chosen so none can inflate a score: the coin bonus pays the wallet only, and the slow pack trades scoring rate for reaction time",
     "Cloud leaderboard over the artifact db capability: live top 20, one row per player",
     "Name prompt via a real HTML input, so phones get their keyboard and accessibility",
-    "The game is complete without the cloud - the board falls back to this device's best"
+    "The game is complete without the cloud - the board falls back to this device's best",
+    "Three lives (max five), so one fall no longer ends the run",
+    "Reviving COSTS an evolution stage and the coin combo, which is what keeps scores comparable",
+    "Rare heart pickups that appear more often the closer you are to losing",
+    "Final-life tension: a pulsing red vignette kept to the screen edges so hazards stay readable",
+    "Super Suit: hold to fly on a per-run flight budget that only drains while held, then burns down to a Turbo Pack"
   ],
   "stats": {
     "playtime": "1-5 minutes per run",
@@ -67,14 +72,18 @@
       "Power-up collection",
       "Stage-3 gliding",
       "Coin economy and cosmetics",
-      "Leaderboard chasing"
+      "Leaderboard chasing",
+      "Lives and revives",
+      "Suit flight budgeting"
     ],
     "unique": [
       "Missions pay out a visible ability rather than an abstract score bonus",
       "A power curve inside a single run: weak, strong, unstoppable",
       "Form is lost on death, so loss aversion drives the restart",
       "Gaps sized from each form's measured physics, not an estimate",
-      "Shop perks are designed so buying power cannot buy leaderboard position"
+      "Shop perks are designed so buying power cannot buy leaderboard position",
+      "A revive costs a form and the combo, so three lives inflate scores x1.78 rather than the naive x3",
+      "Flight is a total budget per run, making WHEN to spend it the decision rather than whether to hold"
     ]
   },
   "difficulty": {
@@ -103,7 +112,7 @@
     ]
   },
   "createdAt": "2026-09-08",
-  "updatedAt": "2026-09-09",
+  "updatedAt": "2026-09-11",
   "status": "playable",
   "technicalDetails": {
     "engine": "Custom HTML5 Canvas",
@@ -155,9 +164,15 @@
       "W and SPACE reach the name field while the prompt is open, and jump again once it closes",
       "focus happens synchronously inside the gesture, which is what raises the iOS keyboard",
       "typing a real name through the browser's own input pipeline, on touch and mouse",
-      "a player outside the visible rows still has a findable, pinned rank"
+      "a player outside the visible rows still has a findable, pinned rank",
+      "a fall spends a life rather than ending the run, and revives on solid ground",
+      "reviving costs an evolution stage and the combo, and never falls below the base form",
+      "hearts restore a life, are capped, and get likelier only when the player is in trouble",
+      "suit flight: holding lifts, releasing drops, the tank drains only while held",
+      "flight cannot leave the top of the world or farm the big-air bonus",
+      "the suit burns out into the pack below it and normal jumping returns"
     ],
-    "checks": 55
+    "checks": 81
   },
   "progression": {
     "type": "in-run evolution",
@@ -249,6 +264,13 @@
         "id": "rain",
         "price": 900,
         "effect": "cosmetic"
+      },
+      {
+        "slot": "rocket",
+        "id": "cape",
+        "price": 3200,
+        "needBest": 3500,
+        "effect": "Hold to fly, 12s of flight per run, then burns out into the Turbo Pack"
       }
     ]
   },
@@ -276,5 +298,12 @@
         "sharing": "organization-internal only"
       }
     ]
+  },
+  "lives": {
+    "start": 3,
+    "max": 5,
+    "reviveCost": "One evolution stage and the entire coin combo",
+    "measuredInflation": "x1.78 average score vs a single life, against a naive expectation of x3",
+    "hearts": "Rare pickups. Spawn chance is 0 at full health and rises to ~9% per platform on the last life."
   }
 }
