@@ -1,7 +1,7 @@
 {
   "id": "endless-runner",
   "name": "Turbo Dash",
-  "version": "7.0.0",
+  "version": "7.1.0",
   "description": "A colorful endless runner platformer across ten named difficulty levels. Dodge crumbling and fake platforms, evolve mid-run, spend coins at a merchant balloon without breaking stride, keep a pet, and chase a live shared leaderboard.",
   "author": "CaisoGames AI Team",
   "genre": "Endless Runner Platformer",
@@ -63,7 +63,11 @@
     "A single banner queue, so zone, level and evolution announcements never overwrite each other",
     "Fourth evolution HERO: 4 jumps plus a rechargeable flight burst, earned by completing all three missions in one run",
     "HERO's flight refills only while running on the ground, so hovering forever is impossible by construction",
-    "The wallet total and a savings goal are shown during play, on the game-over screen and in the shop"
+    "The wallet total and a savings goal are shown during play, on the game-over screen and in the shop",
+    "Coins are banked the moment they are collected, so abandoning a run mid-way (app switch, closed tab) loses nothing",
+    "Profile is flushed on pagehide and when the page is hidden, and every write is verified by reading it back",
+    "A storage self-test at boot; if saving is blocked the title screen says so instead of failing silently",
+    "Losing a life freezes the run on a LIFE LOST screen until a tap, with CONTINUE and SHOP offered there"
   ],
   "stats": {
     "playtime": "1-5 minutes per run",
@@ -238,9 +242,13 @@
       "the savings goal names the cheapest remaining item and never dangles a record-locked one",
       "HERO grants four jumps and a burst that refills only on the ground",
       "HERO flight cannot hover forever, and the suit's finite budget is spent before it",
-      "gaps at HERO are sized for jumps alone, so an empty tank is never a death sentence"
+      "gaps at HERO are sized for jumps alone, so an empty tank is never a death sentence",
+      "coins bank on pickup and the game-over total never double-counts",
+      "an abandoned run keeps its coins across a reload",
+      "losing a life freezes the run; tap or SPACE resumes without jumping and with a mercy window",
+      "the shop opens from the pause and returns to it; the final death skips the pause"
     ],
-    "checks": 141
+    "checks": 155
   },
   "progression": {
     "type": "in-run evolution",
@@ -410,7 +418,12 @@
   },
   "economy": {
     "walletCarriesBetweenRuns": true,
-    "note": "Coins were always banked correctly across runs; the game simply never displayed a running total, so players reasonably believed they were being wiped. The wallet total and the next unlock are now shown during play, at game over, and in the shop.",
-    "verified": "Three consecutive runs bank 40 -> 75 -> 100, and the balance survives a reload."
+    "note": "Earlier fix made the running total visible. This one fixes the remaining loss: coins were only credited in finishRun() on the final death, so any run abandoned mid-way lost them. They now bank on pickup and the profile is flushed whenever the page is hidden or unloaded.",
+    "verified": "Seven coins picked up, then the page hidden and unloaded without the run ending: wallet is 507 after a reload (500 + 7)."
+  },
+  "lifePause": {
+    "when": "Every life lost except the last",
+    "rationale": "Losing a life is the one moment a runner can pause without breaking flow - momentum is already zero. A mid-run menu would interrupt; a pause at death interrupts nothing. It gives the player a beat to register the loss and a natural point to shop.",
+    "resume": "Tap anywhere, SPACE, or CONTINUE. The resuming input is consumed so it cannot double as a jump; hit-stop is cleared so the world moves at once."
   }
 }

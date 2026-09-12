@@ -247,13 +247,18 @@ console.log('\nShop:');
     o.slowPackTradesScoreForTime = slow < fast;
     save.equip.rocket = 'none';
 
-    // A coin bonus must never reach score, or coins could buy a rank.
-    save.equip.hat = 'crown'; restart();
-    stats.runCoins = 100; score = 1000;
-    const w0 = save.wallet, s0 = score;
-    finishRun();
-    o.coinBonusPaysWalletOnly = (save.wallet - w0) === 125 && score === s0;
-    save.equip.hat = 'none';
+    // A coin bonus must never reach score, or coins could buy a rank. The
+    // Crown is applied at pickup now, so earn the coins for real.
+    const earn = (n) => { for (let i = 0; i < n; i++) { coins.length = 0;
+      coins.push({ x: PLAYER_X + PLAYER_W / 2, y: player.y + PLAYER_H / 2, collected: false });
+      checkCollisions(); } };
+    save.equip.hat = 'crown'; restart(); started = true; save.wallet = 0; walletCarry = 0;
+    const s0 = score; earn(4); const crownScore = score - s0;
+    const crownWallet = save.wallet;
+    save.equip.hat = 'none'; restart(); started = true; save.wallet = 0; walletCarry = 0;
+    const s1 = score; earn(4);
+    o.coinBonusPaysWalletOnly = crownWallet === 5 && save.wallet === 4 &&
+                                (score - s1) === crownScore;
 
     // Menus must pause the run rather than let it play on unseen.
     restart(); started = true; const d0 = distance;
@@ -700,10 +705,11 @@ console.log('\nPets:');
     };
     o.pupAddsNothingToScore = scoreOf('pup') === scoreOf('none');
 
-    save.equip.pet = 'pup'; restart(); started = true;
-    stats.runCoins = 10; petCoinBonus = 30;
-    const w0 = save.wallet; finishRun();
-    o.pupBonusLandsInTheWallet = (save.wallet - w0) === 40;
+    save.equip.pet = 'pup'; restart(); started = true; save.wallet = 0;
+    coins.length = 0;
+    coins.push({ x: PLAYER_X + PLAYER_W / 2, y: player.y + PLAYER_H / 2, collected: false });
+    checkCollisions();
+    o.pupBonusLandsInTheWalletLive = save.wallet === 4;   // 1 coin + 3 bonus, at once
 
     save.equip.pet = 'bird'; o.onlyTheBirdSpotsFakes = birdSpotsFakes() === true;
     save.equip.pet = 'pup';  o.othersDoNot = birdSpotsFakes() === false;
@@ -762,8 +768,12 @@ console.log('\nWallet:');
   const { browser, page } = await open(webkit, TARGETS[0].ctx);
   const e = await page.evaluate(() => {
     const o = {};
-    const runWorth = (coins) => {
-      restart(); started = true; stats.runCoins = coins; lives = 1; die('fall');
+    const runWorth = (n) => {
+      restart(); started = true; walletCarry = 0;
+      for (let i = 0; i < n; i++) { coins.length = 0;
+        coins.push({ x: PLAYER_X + PLAYER_W / 2, y: player.y + PLAYER_H / 2, collected: false });
+        checkCollisions(); }
+      lives = 1; die('fall');
     };
     save.wallet = 0; save.totalCoins = 0; save.owned = []; save.best = 9999;
     runWorth(40); const a = save.wallet;
@@ -862,6 +872,88 @@ console.log('\nHERO evolution:');
     o.gapsGrowWithEachStage = widths.every((v, i) => i === 0 || v > widths[i - 1]);
     stage = 3;
     o.heroGapsAssumeJumpsNotFlight = gapRange()[1] < 864 * 0.8;
+    restart();
+    return o;
+  });
+  for (const [k, v] of Object.entries(e)) ok(v === true, k);
+  await browser.close();
+}
+
+// 20. COINS BANK ON PICKUP. Coins used to be credited only in finishRun(),
+//     on the final death - so a run abandoned mid-way (tab closed, app
+//     switched, page reclaimed by iOS) lost every coin it had earned. On a
+//     phone that is the normal way to stop playing.
+console.log('\nCoins bank on pickup:');
+{
+  const { browser, page } = await open(webkit, TARGETS[0].ctx);
+  const e = await page.evaluate(() => {
+    const o = {};
+    o.storageProbePassed = storageOk === true;
+    restart(); started = true; save.wallet = 100; walletCarry = 0; persist();
+    const grab = () => { coins.length = 0;
+      coins.push({ x: PLAYER_X + PLAYER_W / 2, y: player.y + PLAYER_H / 2, collected: false });
+      checkCollisions(); };
+    grab(); o.aCoinBanksTheMomentItIsTaken = save.wallet === 101 && !gameOver;
+    grab(); grab(); o.everyCoinBanksAtOnce = save.wallet === 103;
+    // the game-over total must equal what was banked, never double it
+    lives = 1; die('fall');
+    o.gameOverDoesNotDoubleCount = save.wallet === 103 && runWalletGain === 3;
+    return o;
+  });
+  for (const [k, v] of Object.entries(e)) ok(v === true, k);
+
+  // The bug itself: abandon the run, reload, and the coins must still be there.
+  await page.evaluate(() => {
+    restart(); started = true; save.wallet = 500; walletCarry = 0; persist();
+    for (let i = 0; i < 7; i++) { coins.length = 0;
+      coins.push({ x: PLAYER_X + PLAYER_W / 2, y: player.y + PLAYER_H / 2, collected: false });
+      checkCollisions(); }
+    document.dispatchEvent(new Event('visibilitychange'));
+    window.dispatchEvent(new Event('pagehide'));
+  });
+  await page.reload();
+  await page.waitForTimeout(1100);
+  const kept = await page.evaluate(() => save.wallet);
+  ok(kept === 507, 'an abandoned run keeps its coins across a reload', String(kept));
+  await browser.close();
+}
+
+// 21. LIFE LOST pauses the run. Losing a life is the one moment a runner can
+//     stop without breaking anything - momentum is already zero - and it is
+//     where the player gets to decide whether to shop.
+console.log('\nLife-lost pause:');
+{
+  const { browser, page } = await open(webkit, TARGETS[0].ctx);
+  const e = await page.evaluate(() => {
+    const o = {};
+    restart(); started = true; evolve();
+    player.y = H + 200; checkCollisions();
+    o.losingALifeFreezesTheRun = lifePause && !gameOver && lives === 2;
+    const d0 = distance;
+    update(16); update(16);
+    o.theWorldHoldsWhileFrozen = distance === d0;
+
+    const ev = new KeyboardEvent('keydown', { code: 'Space', key: ' ', bubbles: true, cancelable: true });
+    window.dispatchEvent(ev);
+    o.spaceResumesWithoutJumping = lifePause === false && jumpBuffer === 0;
+    o.resumeGrantsMercy = invuln >= REVIVE_INVULN;
+    update(16);
+    o.theWorldMovesAgainAtOnce = distance > d0;       // no deferred hit-stop
+
+    restart(); started = true;
+    player.y = H + 200; checkCollisions();
+    o.aTapAnywhereResumes = routePress(-9999, -9999) === true && lifePause === false;
+
+    restart(); started = true;
+    player.y = H + 200; checkCollisions();
+    openShop();
+    o.theShopOpensFromThePause = uiScreen === 'shop' && lifePause;
+    closeMenu();
+    o.closingTheShopReturnsToThePause = uiScreen === 'play' && lifePause;
+
+    restart(); started = true; lives = 1;
+    player.y = H + 200; checkCollisions();
+    o.theFinalDeathSkipsThePause = gameOver && !lifePause;
     restart();
     return o;
   });

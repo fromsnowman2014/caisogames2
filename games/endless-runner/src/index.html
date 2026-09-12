@@ -485,7 +485,9 @@ window.addEventListener("keydown", e => {
   if (e.code === "Space" || e.code === "ArrowUp" || e.code === "KeyW") {
     e.preventDefault();
     unlockAudio();
-    if (!e.repeat) pressJump();
+    if (e.repeat) return;
+    if (lifePause) { resumeFromLifePause(); return; }   // resume, do not jump
+    pressJump();
   }
 });
 
@@ -1837,9 +1839,66 @@ function loadSave() {
   bestDistance = save.best || 0;
 }
 
+/* --- Persistence ---------------------------------------------------------
+   Two things went wrong here, and both were silent.
+
+   First, coins were only banked when a run ENDED - in finishRun(), on the
+   final death. Close the tab, switch apps, let iOS reclaim the page mid-run,
+   and every coin from that run vanished. On a phone that is the normal way to
+   stop playing, and three lives made runs long enough for it to happen often.
+   Coins are now banked the moment they are collected (see collectCoin) and
+   the profile is flushed whenever the page is hidden or unloaded.
+
+   Second, persist() swallowed every error, so a blocked or ephemeral store
+   (a sandboxed iframe, a private window) looked exactly like a working one.
+   Writes are now verified by reading them back, and the result is shown on
+   the title screen so a storage problem is visible instead of mysterious.
+   ---------------------------------------------------------------------- */
+
+let storageOk = null;         // null = untested, true/false after the probe
+let persistDirty = false;
+let lastPersistAt = 0;
+
 function persist() {
-  try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (e) {}
+  try {
+    const body = JSON.stringify(save);
+    localStorage.setItem(SAVE_KEY, body);
+    // A write that cannot be read back has not happened.
+    storageOk = localStorage.getItem(SAVE_KEY) === body;
+  } catch (e) {
+    storageOk = false;
+  }
+  persistDirty = false;
+  lastPersistAt = performance.now();
+  return storageOk;
 }
+
+/** Mark the profile changed; it is written within ~1.5s, or at once on exit. */
+function persistSoon() { persistDirty = true; }
+
+function flushPersist(force) {
+  if (!persistDirty) return;
+  if (force || performance.now() - lastPersistAt > 1500) persist();
+}
+
+/** Prove the store works by round-tripping a probe key, before anything relies on it. */
+function probeStorage() {
+  try {
+    const k = SAVE_KEY + ".probe", v = String(Date.now());
+    localStorage.setItem(k, v);
+    const ok = localStorage.getItem(k) === v;
+    localStorage.removeItem(k);
+    storageOk = ok;
+  } catch (e) {
+    storageOk = false;
+  }
+  return storageOk;
+}
+
+// Whatever is pending must reach disk before the page goes away. pagehide is
+// the reliable one on iOS; visibilitychange covers app switching.
+window.addEventListener("pagehide", () => flushPersist(true));
+document.addEventListener("visibilitychange", () => { if (document.hidden) flushPersist(true); });
 
 /* ---------------------------------------------------------------------------
    CLOUD LEADERBOARD
@@ -2024,12 +2083,12 @@ function finishRun() {
   const meters = Math.floor(distance / 10);
   save.runs++;
   save.totalCoins += stats.runCoins;
-  // CROWN pays into the WALLET only. A coin bonus must never reach score, or
-  // a patient player could buy their way up the leaderboard.
-  const walletGain = Math.round(stats.runCoins *
-                     (equipped("hat").id === "crown" ? 1.25 : 1)) + petCoinBonus;
-  save.wallet += walletGain;
-  runWalletGain = walletGain;
+  // Coins were banked as they were collected. Only the fractional Crown carry
+  // is left to settle here; runBanked is the total this run put in the wallet.
+  const leftover = Math.round(walletCarry);
+  if (leftover > 0) { save.wallet += leftover; runBanked += leftover; }
+  walletCarry = 0;
+  runWalletGain = runBanked;
   newRecord = false;
   if (Math.floor(score) > save.bestScore) { save.bestScore = Math.floor(score); newRecord = true; }
   if (meters > save.best) save.best = meters;
@@ -2049,6 +2108,8 @@ function finishRun() {
 
 let newRecord = false;
 let runWalletGain = 0;   // coins banked by the last finished run
+let runBanked = 0;       // coins this run has put in the wallet so far
+let walletCarry = 0;     // fractional Crown bonus waiting to become a whole coin
 let beatBest = false;   // has this run already passed the stored best?
 
 
@@ -2459,8 +2520,16 @@ function collectCoin(c) {
 
   stats.runCoins++;
   if (mult > stats.runBestMult) stats.runBestMult = mult;
-  // The Pup's help shows up in the wallet at the end of the run, never here.
-  if (hasPet("pup")) petCoinBonus += 3;
+
+  // BANK IT NOW. Coins used to be credited only when the run ended, so a run
+  // that was abandoned - the tab closed, the app switched away - lost every
+  // coin it had earned. The Crown's 25% is applied here too, through a
+  // fractional carry, so even that survives an abandoned run.
+  walletCarry += equipped("hat").id === "crown" ? 1.25 : 1;
+  const whole = Math.floor(walletCarry);
+  if (whole > 0) { save.wallet += whole; walletCarry -= whole; runBanked += whole; }
+  if (hasPet("pup")) { save.wallet += 3; runBanked += 3; }
+  persistSoon();
 
   spawnSparkle(c.x, c.y);
   playSfx("coin");
@@ -2544,6 +2613,8 @@ const REVIVE_INVULN = 110;   // ~1.8s of mercy after being put back down
 let lives;
 let reviveFlash;      // frames of the white "you were saved" flash
 let lastLifeWarned;   // so the final-life sting only fires once
+let lifePause;        // the run is frozen on a LIFE LOST screen, waiting for a tap
+let lifePauseCause;   // what took the life, for the overlay
 
 function heartChance() {
   if (lives >= MAX_LIVES) return 0;
@@ -2623,7 +2694,31 @@ function spendLife(cause) {
     addPopup("LAST LIFE!", "#FF3B3B");
     playSfx("lastLife");
   }
+
+  /* FREEZE. The run used to resume instantly after a revive, which had two
+     costs. The player never got a beat to register what had just happened -
+     the loss landed as a blur. And there was no natural moment to step away:
+     the run is continuous, so "when do I go to the shop?" had no answer.
+
+     Losing a life is the one moment a runner can pause without breaking
+     anything, because momentum is already at zero. So the world holds here
+     until a tap, and the shop is offered from this screen - unlike a menu
+     mid-run, which the merchant balloon exists to avoid. */
+  lifePause = true;
+  lifePauseCause = cause;
+  releaseJump();
   return true;
+}
+
+function resumeFromLifePause() {
+  lifePause = false;
+  jumpBuffer = 0;                // the resuming tap must not also be a jump
+  invuln = Math.max(invuln, REVIVE_INVULN);   // full mercy window on resume
+  // The impact's hit-stop already had its moment during the pause. Left in
+  // place it would freeze the first ten frames AFTER the tap, which reads as
+  // a button that did nothing.
+  hitStop = 0;
+  playSfx("click");
 }
 
 function die(cause) {
@@ -3568,6 +3663,9 @@ function routePress(clientX, clientY) {
       return true;
     }
   }
+  // On the LIFE LOST screen, a tap anywhere that is not a button resumes -
+  // and is consumed, so it can never double as the first jump of the revive.
+  if (lifePause && uiScreen === "play") { resumeFromLifePause(); return true; }
   // Inside a menu, a tap that hits nothing does nothing - it must never fall
   // through and start a run behind the menu.
   return uiScreen !== "play";
@@ -3650,6 +3748,10 @@ function drawShop() {
   });
 
   uiBtn(26, H - 62, 150, 46, "BACK", closeMenu, { font: 20 });
+  if (lifePause) {
+    outlinedText("Packs, Halo and pets take effect from your next run.", W - 26, 100,
+                 "bold 14px 'Trebuchet MS', sans-serif", "#9FB6C9", "right", 3);
+  }
   const nu2 = nextUnlock();
   outlinedText(nu2
       ? "Saving up: " + (nu2.item.price - save.wallet).toLocaleString() +
@@ -3917,6 +4019,59 @@ function drawUI() {
   drawBanner();
 
   if (!started) drawTitle();
+  if (lifePause && uiScreen === "play" && !gameOver) drawLifeLost();
+}
+
+/**
+ * The LIFE LOST screen. Says what happened, what it cost, what is left, and
+ * offers the two things worth doing before carrying on: continue, or spend
+ * the coins you have been banking.
+ */
+function drawLifeLost() {
+  ctx.fillStyle = "rgba(9,17,26,0.72)";
+  ctx.fillRect(0, 0, W, H);
+
+  outlinedText("LIFE LOST", W / 2, 150,
+               "bold 46px 'Trebuchet MS', sans-serif", "#FF6B6B", "center");
+
+  // Remaining lives, drawn large so the count lands.
+  for (let i = 0; i < MAX_LIVES; i++) {
+    const hx = W / 2 - (MAX_LIVES - 1) * 22 + i * 44, hy = 200, full = i < lives;
+    ctx.save();
+    ctx.translate(hx, hy); ctx.scale(1.15, 1.15);
+    ctx.beginPath();
+    ctx.moveTo(0, 12);
+    ctx.bezierCurveTo(-16, 0, -11, -13, 0, -5);
+    ctx.bezierCurveTo(11, -13, 16, 0, 0, 12);
+    ctx.closePath();
+    ctx.fillStyle = full ? "#FF4D6D" : "rgba(0,0,0,0.40)";
+    ctx.fill();
+    ctx.lineWidth = 2.4;
+    ctx.strokeStyle = full ? "#7A1028" : "rgba(255,255,255,0.32)";
+    ctx.stroke();
+    ctx.restore();
+  }
+  outlinedText(lives === 1 ? "LAST LIFE" : lives + " lives left", W / 2, 250,
+               "bold 22px 'Trebuchet MS', sans-serif",
+               lives === 1 ? "#FF3B3B" : "#FFFFFF", "center", 3.5);
+
+  const what = lifePauseCause === "spike" ? "Hit a spike" : "Fell";
+  outlinedText(what + "  ·  form and combo lost", W / 2, 282,
+               "bold 17px 'Trebuchet MS', sans-serif", "#B9E6FF", "center", 3);
+
+  outlinedText("WALLET  " + save.wallet.toLocaleString() + "  (banked as you ran)",
+               W / 2, 322, "bold 19px 'Trebuchet MS', sans-serif", C.coin, "center", 3.5);
+
+  uiBtn(W / 2 - 215, 360, 210, 54, "CONTINUE", resumeFromLifePause,
+        { accent: "#2B6E7F", border: "#7FD4E6", font: 22 });
+  uiBtn(W / 2 + 5, 360, 210, 54, "SHOP", openShop,
+        { accent: "#2F6B3A", border: "#50FA7B", font: 22 });
+
+  const pulse = 0.7 + Math.sin(elapsed * 5) * 0.3;
+  ctx.globalAlpha = pulse;
+  outlinedText(isTouch() ? "or tap anywhere to continue" : "or press SPACE to continue",
+               W / 2, 446, "bold 17px 'Trebuchet MS', sans-serif", "#9FB6C9", "center", 3);
+  ctx.globalAlpha = 1;
 }
 
 function drawFocusMission() {
@@ -4018,6 +4173,11 @@ function drawTitle() {
   uiBtn(W / 2 + 10, 386, 200, 50, "LEADERBOARD", openBoard,
         { accent: "#2B4E7F", border: "#7FB4E6", font: 18 });
 
+  if (storageOk === false) {
+    outlinedText("Saving is blocked in this viewer - progress will not be kept",
+                 W / 2, 488, "bold 15px 'Trebuchet MS', sans-serif", "#FF9F5A", "center", 3);
+  }
+
   if (save.name) {
     outlinedText("Playing as " + save.name, W / 2, 462,
                  "bold 16px 'Trebuchet MS', sans-serif", "#9FB6C9", "center", 3);
@@ -4113,6 +4273,16 @@ function update(dt) {
   // overlay - coming back to a corpse after buying a hat would be absurd.
   if (uiScreen !== "play" || nameModalOpen) return;
 
+  // Frozen on the LIFE LOST screen. Particles finish so the impact settles.
+  if (lifePause) {
+    for (const q of particles) { q.x += q.vx; q.y += q.vy; q.vy += 0.15; q.life--; }
+    for (const q of popups) { q.y += q.vy; q.life--; }
+    particles = particles.filter(q => q.life > 0);
+    popups = popups.filter(q => q.life > 0);
+    if (shakeAmount > 0) { shakeAmount *= 0.86; if (shakeAmount < 0.3) shakeAmount = 0; }
+    return;
+  }
+
   spawnTrail();
 
   // Screen shake decays exponentially - a sharp hit that settles fast.
@@ -4161,6 +4331,7 @@ function update(dt) {
     score += scrollSpeed * 0.1 * stageDef().mult;   // distance component
     stats.runMeters = Math.floor(distance / 10);
     scrollSpeed = targetSpeed();
+    flushPersist(false);
     updateLevel();
     updateBanners();
     updateBiome();
@@ -4291,6 +4462,7 @@ function restart() {
 
   beatBest = false;
   lives = START_LIVES; reviveFlash = 0; lastLifeWarned = false;
+  lifePause = false; lifePauseCause = null;
   shownLevel = 0;
   bannerQueue = []; banner = null;
   stage = 0; cores = []; evolveFlash = 0; coresEarned = 0;
@@ -4302,6 +4474,7 @@ function restart() {
   if (equipped("rocket").id === "turbo" || equipped("rocket").id === "cape") stage = 1;
   flightMeter = FLIGHT_FRAMES; suitBurned = false; flying = false;
   cubUsed = false; petCoinBonus = 0; heroFuel = HERO_FLIGHT_MAX;
+  runBanked = 0; walletCarry = 0;
   petX = PLAYER_X - 46; petY = player.y - 26;
   // HALO starts the run holding a shield.
   power = { magnet: 0, shield: equipped("hat").id === "halo" ? 1 : 0, wings: 0 };
@@ -4326,6 +4499,7 @@ function restart() {
  */
 function boot() {
   try {
+    probeStorage();
     loadSave();
     restart();
     resizeCanvas();
