@@ -1,7 +1,7 @@
 {
   "id": "endless-runner",
   "name": "Turbo Dash",
-  "version": "6.0.0",
+  "version": "7.0.0",
   "description": "A colorful endless runner platformer across ten named difficulty levels. Dodge crumbling and fake platforms, evolve mid-run, spend coins at a merchant balloon without breaking stride, keep a pet, and chase a live shared leaderboard.",
   "author": "CaisoGames AI Team",
   "genre": "Endless Runner Platformer",
@@ -60,7 +60,10 @@
     "Fakes carry a visible tell (translucent and drifting) so reading them is a skill, not a memory test",
     "Merchant balloon: mid-run spending as a single jump-and-touch, with no menu and no pause",
     "Pets: Coin Pup (wallet-only coin gathering), Scout Bird (marks fakes), Spark Cub (spares one revive penalty)",
-    "A single banner queue, so zone, level and evolution announcements never overwrite each other"
+    "A single banner queue, so zone, level and evolution announcements never overwrite each other",
+    "Fourth evolution HERO: 4 jumps plus a rechargeable flight burst, earned by completing all three missions in one run",
+    "HERO's flight refills only while running on the ground, so hovering forever is impossible by construction",
+    "The wallet total and a savings goal are shown during play, on the game-over screen and in the shop"
   ],
   "stats": {
     "playtime": "1-5 minutes per run",
@@ -96,7 +99,9 @@
       "Flight is a total budget per run, making WHEN to spend it the decision rather than whether to hold",
       "Fake platforms are opt-in bait beside the route, so a trap is never a coin flip",
       "Mid-run shopping is a pickup rather than a menu, because a menu would stop the run",
-      "Pets may ease the run or fatten the wallet, but never inflate the score"
+      "Pets may ease the run or fatten the wallet, but never inflate the score",
+      "Flight is reachable by skill (HERO) as well as by purchase, keeping the game's rule that strong powers are earned",
+      "HERO's short rechargeable burst and the Super Suit's large one-shot budget stay distinct, so buying the suit still buys something"
     ]
   },
   "difficulty": {
@@ -163,7 +168,7 @@
     ]
   },
   "createdAt": "2026-09-08",
-  "updatedAt": "2026-09-11",
+  "updatedAt": "2026-09-12",
   "status": "playable",
   "technicalDetails": {
     "engine": "Custom HTML5 Canvas",
@@ -228,9 +233,14 @@
       "the real route is traversable ignoring every fake platform",
       "merchant buys deduct and grant; a refused purchase changes nothing",
       "pets never add to score, and the Cub spares one revive penalty per run",
-      "zone, level and evolution banners queue instead of overlapping"
+      "zone, level and evolution banners queue instead of overlapping",
+      "coins accumulate across runs and survive a reload",
+      "the savings goal names the cheapest remaining item and never dangles a record-locked one",
+      "HERO grants four jumps and a burst that refills only on the ground",
+      "HERO flight cannot hover forever, and the suit's finite budget is spent before it",
+      "gaps at HERO are sized for jumps alone, so an empty tank is never a death sentence"
     ],
-    "checks": 118
+    "checks": 141
   },
   "progression": {
     "type": "in-run evolution",
@@ -254,9 +264,16 @@
         "grants": "Triple jump + hold to glide",
         "scoreMultiplier": 1.6,
         "earnedBy": "Complete a second mission, then collect the next Core"
+      },
+      {
+        "stage": 4,
+        "name": "HERO",
+        "grants": "Four jumps + rechargeable flight burst",
+        "scoreMultiplier": 2.0,
+        "earnedBy": "Complete a third mission in the same run, then collect the Core"
       }
     ],
-    "note": "Evolution is per-run and resets on death. Mission difficulty tiers persist, so cores get harder to earn over time."
+    "note": "Evolution is per-run and resets on death. Reaching HERO means completing all three missions in a single run. Mission tiers persist, so cores get harder to earn over time."
   },
   "shop": {
     "currency": "Coins collected while running, banked into a wallet at the end of each run",
@@ -325,13 +342,6 @@
         "effect": "cosmetic"
       },
       {
-        "slot": "rocket",
-        "id": "cape",
-        "price": 3200,
-        "needBest": 3500,
-        "effect": "Hold to fly, 12s of flight per run, then burns out into the Turbo Pack"
-      },
-      {
         "slot": "pet",
         "id": "pup",
         "price": 800,
@@ -350,6 +360,13 @@
         "price": 2600,
         "needBest": 2200,
         "effect": "Once a run, a revive costs no evolution stage"
+      },
+      {
+        "slot": "rocket",
+        "id": "cape",
+        "price": 2600,
+        "needBest": 3000,
+        "effect": "Hold to fly from the opening second; 12s per run, then a Turbo Pack"
       }
     ]
   },
@@ -390,5 +407,10 @@
     "form": "A balloon on the track, reached with a deliberate jump",
     "rationale": "A mid-run menu would stop the run and, on a phone, appear under a finger already held down to jump. A priced pickup keeps the decision without breaking stride.",
     "goods": "Shown on the balloon before you commit; hearts are only offered when lives are missing."
+  },
+  "economy": {
+    "walletCarriesBetweenRuns": true,
+    "note": "Coins were always banked correctly across runs; the game simply never displayed a running total, so players reasonably believed they were being wiped. The wallet total and the next unlock are now shown during play, at game over, and in the shop.",
+    "verified": "Three consecutive runs bank 40 -> 75 -> 100, and the balance survives a reload."
   }
 }

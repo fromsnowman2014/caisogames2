@@ -415,8 +415,8 @@ function releaseJump() {
  */
 function tryJump() {
   if (jumpBuffer <= 0) return;
-  // While the suit can fly, holding IS the control: a jump would fight it.
-  if (hasSuit()) { jumpBuffer = 0; return; }
+  // While flight is available, holding IS the control: a jump would fight it.
+  if (hasSuit() || heroCanFly()) { jumpBuffer = 0; return; }
 
   const grounded = player.grounded || coyoteFrames > 0;
 
@@ -1212,8 +1212,32 @@ const STAGES = [
   { name: "WINGED", airJumps: 1, mult: 1.25, glide: false, reach: 1.68,
     body: "#BD93F9", dark: "#9A6FE0", back: "#6B4E9E", aura: "#E9D5FF" },
   { name: "BLAZE",  airJumps: 2, mult: 1.60, glide: true,  reach: 2.34,
-    body: "#FFA726", dark: "#F57C00", back: "#BF5F00", aura: "#FFE0A3" }
+    body: "#FFA726", dark: "#F57C00", back: "#BF5F00", aura: "#FFE0A3" },
+  // HERO exists because flight was effectively locked behind 3200 coins, and
+  // this game has consistently put its strongest things behind SKILL rather
+  // than patience. Reaching it takes three missions in a single run.
+  //
+  // It deliberately does NOT make the Super Suit pointless. The suit is one
+  // large 12-second budget available from the opening second; HERO's flight is
+  // a short burst that refills on the ground - a repeatable rescue rather than
+  // a long cruise. Buying the suit still buys something the evolution cannot.
+  { name: "HERO",   airJumps: 3, mult: 2.00, glide: true,  reach: 2.95,
+    body: "#4FC3F7", dark: "#0288D1", back: "#01579B", aura: "#E1F5FE" }
 ];
+
+/* --- HERO's flight burst ---------------------------------------------------
+   Small, and it recharges. That shape is chosen so the answer to "should I
+   fly?" stays interesting all run: a long budget gets spent once and forgotten,
+   while a short one that comes back is a decision you make again every time
+   the ground runs out.
+   -------------------------------------------------------------------------- */
+
+const HERO_FLIGHT_MAX  = 210;   // 3.5 seconds of held flight
+const HERO_REFILL_RATE = 0.62;  // refilled per grounded frame (~5.6s to full)
+
+let heroFuel;
+
+function heroCanFly() { return stageDef().name === "HERO" && heroFuel > 0; }
 
 let stage;          // index into STAGES - the current form
 let cores;          // Evolution Cores waiting to be collected
@@ -1267,9 +1291,10 @@ function evolve() {
   // The transformation is the reward, so it gets the biggest feedback in the
   // game: a white-out, a hard shake, a freeze, and a shower of the new colour.
   evolveFlash = 22;
-  pushBanner("STAGE " + (stage + 1), s.name,
-             stage === 1 ? "DOUBLE JUMP UNLOCKED" : "TRIPLE JUMP + HOLD TO GLIDE",
-             s.aura, 165);
+  const note = stage === 1 ? "DOUBLE JUMP UNLOCKED"
+             : stage === 2 ? "TRIPLE JUMP + HOLD TO GLIDE"
+             : "4x JUMP + HOLD TO FLY";
+  pushBanner("STAGE " + (stage + 1), s.name, note, s.aura, 165);
   hitStop = 10;
   shake(20);
   playSfx("evolve");
@@ -1288,6 +1313,7 @@ function evolve() {
   // Refill air jumps immediately so the new power is usable this instant -
   // the moment of transformation should feel like a surge, not a cooldown.
   player.airJumps = maxAirJumps();
+  if (s.name === "HERO") heroFuel = HERO_FLIGHT_MAX;
   addPopup("STAGE " + (stage + 1) + " - " + s.name + "!", s.aura);
 }
 
@@ -1685,8 +1711,8 @@ const SHOP = {
       desc: "World runs 8% slower. Easier to read - but you score slower too." },
     { id: "turbo",  name: "Turbo Pack",  price: 2400, needBest: 2500,
       desc: "Begin every run already WINGED. Needs a 2500m record." },
-    { id: "cape",   name: "Super Suit",   price: 3200, needBest: 3500,
-      desc: "Hold to FLY. 12s of flight per run, then it burns down to a Turbo Pack." }
+    { id: "cape",   name: "Super Suit",   price: 2600, needBest: 3000,
+      desc: "Hold to FLY from the opening second. 12s per run, then a Turbo Pack." }
   ],
   pet: [
     { id: "none", name: "No Pet",      price: 0,    desc: "Run alone." },
@@ -1730,6 +1756,26 @@ function buyItem(slot, item) {
   persist();
   playSfx("buy");
   return true;
+}
+
+/**
+ * The cheapest thing the player cannot afford yet, so the wallet has a visible
+ * purpose. Coins were already banked correctly across runs, but the game never
+ * showed a running total OR what it was building toward, so a player who saved
+ * up over several runs had no way to see it happening and reasonably concluded
+ * their coins were being wiped.
+ */
+function nextUnlock() {
+  let best = null;
+  for (const slot of ["hat", "rocket", "pet", "trail"]) {
+    for (const item of SHOP[slot]) {
+      if (item.price <= 0 || hasItem(slot, item.id)) continue;
+      if (item.needBest && save.best < item.needBest) continue;   // not yet earnable
+      if (item.price <= save.wallet) continue;                    // already affordable
+      if (!best || item.price < best.item.price) best = { slot, item };
+    }
+  }
+  return best;
 }
 
 function defaultSave() {
@@ -2025,12 +2071,23 @@ function updatePlayer() {
 
   // FLIGHT (Super Suit). Takes priority over jumping and gliding: while the
   // suit has charge, holding is flight, not a jump.
-  flying = hasSuit() && jumpHeld && flightMeter > 0 && !gameOver;
+  // Two independent sources of flight. The suit is checked first so a player
+  // who owns BOTH spends the finite budget before the renewable one.
+  const suitFlight = hasSuit() && flightMeter > 0;
+  const heroFlight = !suitFlight && heroCanFly();
+  flying = (suitFlight || heroFlight) && jumpHeld && !gameOver;
+
+  // HERO's fuel only comes back while actually running on the ground, so
+  // hovering forever is impossible by construction.
+  if (!flying && player.grounded && stageDef().name === "HERO") {
+    heroFuel = Math.min(HERO_FLIGHT_MAX, heroFuel + HERO_REFILL_RATE);
+  }
+
   if (flying) {
     // Ease toward a steady climb rather than snapping to it, so the ascent
     // reads as a smooth lift rather than a teleport.
     player.velocityY += (FLY_RISE - player.velocityY) * FLY_EASE;
-    flightMeter--;
+    if (suitFlight) flightMeter--; else heroFuel--;
     airFrames = 0;            // flying must not farm the big-air bonus
     player.airJumps = maxAirJumps();
     if (Math.floor(elapsed * 60) % 3 === 0) {
@@ -2040,7 +2097,7 @@ function updatePlayer() {
         life: randInt(12, 22), size: rand(2, 5), color: "#9FD8FF"
       });
     }
-    if (flightMeter === 0) burnOutSuit();
+    if (suitFlight && flightMeter === 0) burnOutSuit();
   }
 
   // GLIDE (stage 3 only)
@@ -3566,8 +3623,12 @@ function drawShop() {
   });
 
   uiBtn(26, H - 62, 150, 46, "BACK", closeMenu, { font: 20 });
-  outlinedText("Coins are earned by playing. Prices are per item, one-time.",
-               200, H - 32, "bold 15px 'Trebuchet MS', sans-serif", "#7d94a8", "left", 3);
+  const nu2 = nextUnlock();
+  outlinedText(nu2
+      ? "Saving up: " + (nu2.item.price - save.wallet).toLocaleString() +
+        " more coins for " + nu2.item.name
+      : "Coins are earned by playing. Your balance carries between runs.",
+    200, H - 32, "bold 15px 'Trebuchet MS', sans-serif", "#B9E6FF", "left", 3);
 }
 
 /** A small preview of the item, drawn in the shop row. */
@@ -3753,6 +3814,12 @@ function drawUI() {
   outlinedText(String(coinCount), coinLabelX, 76,
                "bold 23px 'Trebuchet MS', sans-serif", C.coin);
 
+  // The BANKED total, always on screen. Without it the player only ever sees
+  // this run's haul and cannot tell that their savings are carrying over.
+  const bankX = coinLabelX + ctx.measureText(String(coinCount)).width + 18;
+  outlinedText("(" + save.wallet.toLocaleString() + " saved)", bankX, 76,
+               "bold 17px 'Trebuchet MS', sans-serif", "#B9E6FF", "left", 3);
+
   // --- Lives, as hearts. Drawn full then hollow, so the number you have
   //     LOST is visible too - that is what creates the pressure. ---
   for (let i = 0; i < MAX_LIVES; i++) {
@@ -3875,7 +3942,13 @@ function drawPowerHud() {
   if (power.wings  > 0) items.push({ c: "#BD93F9", label: "WINGS",  frac: power.wings / WINGS_FRAMES });
   if (equipped("rocket").id === "cape" && !suitBurned) {
     items.push({ c: flightMeter / FLIGHT_FRAMES < 0.25 ? "#FF6B6B" : "#9FD8FF",
-                 label: "FLIGHT", frac: flightMeter / FLIGHT_FRAMES });
+                 label: "SUIT", frac: flightMeter / FLIGHT_FRAMES });
+  }
+  if (stageDef().name === "HERO") {
+    // Shown even when empty, because a bar visibly refilling is the whole
+    // reason HERO's flight feels different from the suit's one-shot budget.
+    items.push({ c: heroFuel / HERO_FLIGHT_MAX < 0.25 ? "#FF6B6B" : "#4FC3F7",
+                 label: "FLY", frac: heroFuel / HERO_FLIGHT_MAX });
   }
 
   let y = H - 26 - (items.length - 1) * 34;
@@ -3951,33 +4024,44 @@ function drawGameOver(meters) {
   for (const m of missions) {
     const prog = Math.min(m.target, Math.floor(missionProgress(m)));
     const col = m.done ? "#50FA7B" : "#FFFFFF";
-    outlinedText((m.done ? "✓ " : "") + m.text, W / 2 - 150, my,
-                 "bold 19px 'Trebuchet MS', sans-serif", col, "left", 3.5);
-    outlinedText(prog + "/" + m.target, W / 2 + 190, my,
-                 "bold 19px 'Trebuchet MS', sans-serif", col, "right", 3.5);
+    // The label column is given real room: at 19px the longest mission text
+    // was running straight into its own progress count.
+    outlinedText((m.done ? "✓ " : "") + m.text, W / 2 - 200, my,
+                 "bold 18px 'Trebuchet MS', sans-serif", col, "left", 3.5);
+    outlinedText(prog + "/" + m.target, W / 2 + 200, my,
+                 "bold 18px 'Trebuchet MS', sans-serif", col, "right", 3.5);
     my += 30;
   }
 
   if (!newRecord && save.bestScore > 0) {
-    outlinedText("Best " + save.bestScore.toLocaleString(), W / 2, 452,
+    outlinedText("Best " + save.bestScore.toLocaleString(), W / 2, 424,
                  "bold 20px 'Trebuchet MS', sans-serif", "#CCCCCC", "center");
   }
 
-  if (runWalletGain > 0) {
-    outlinedText("+" + runWalletGain + " coins banked", W / 2, 476,
-                 "bold 18px 'Trebuchet MS', sans-serif", C.coin, "center", 3);
+  // The wallet, stated as a TOTAL with the run's gain beside it. "+12 coins"
+  // alone reads as though the previous runs' coins went somewhere.
+  const gainTxt = runWalletGain > 0 ? "  (+" + runWalletGain + " this run)" : "";
+  outlinedText("WALLET  " + save.wallet.toLocaleString() + gainTxt, W / 2, 452,
+               "bold 21px 'Trebuchet MS', sans-serif", C.coin, "center", 3.5);
+
+  // ...and what it is saving toward, so the grind has a finish line.
+  const nu = nextUnlock();
+  if (nu) {
+    const need = nu.item.price - save.wallet;
+    outlinedText(need.toLocaleString() + " more for " + nu.item.name,
+                 W / 2, 474, "bold 16px 'Trebuchet MS', sans-serif", "#B9E6FF", "center", 3);
   }
 
   // Gently pulse the restart prompt so it's obviously interactive.
   const pulse = 0.7 + Math.sin(elapsed * 5) * 0.3;
   ctx.globalAlpha = pulse;
   outlinedText(isTouch() ? "TAP TO RUN AGAIN" : "PRESS SPACE TO RUN AGAIN",
-               W / 2, 508, "bold 27px 'Trebuchet MS', sans-serif", "#FFFFFF", "center");
+               W / 2, 506, "bold 24px 'Trebuchet MS', sans-serif", "#FFFFFF", "center");
   ctx.globalAlpha = 1;
 
-  uiBtn(W / 2 - 210, 528, 200, 44, "SHOP", openShop,
+  uiBtn(W / 2 - 210, 526, 200, 44, "SHOP", openShop,
         { accent: "#2F6B3A", border: "#50FA7B", font: 18 });
-  uiBtn(W / 2 + 10, 528, 200, 44, "LEADERBOARD", openBoard,
+  uiBtn(W / 2 + 10, 526, 200, 44, "LEADERBOARD", openBoard,
         { accent: "#2B4E7F", border: "#7FB4E6", font: 17 });
 }
 
@@ -4188,7 +4272,7 @@ function restart() {
   // actually has rather than retro-fitted to it.
   if (equipped("rocket").id === "turbo" || equipped("rocket").id === "cape") stage = 1;
   flightMeter = FLIGHT_FRAMES; suitBurned = false; flying = false;
-  cubUsed = false; petCoinBonus = 0;
+  cubUsed = false; petCoinBonus = 0; heroFuel = HERO_FLIGHT_MAX;
   petX = PLAYER_X - 46; petY = player.y - 26;
   // HALO starts the run holding a shield.
   power = { magnet: 0, shield: equipped("hat").id === "halo" ? 1 : 0, wings: 0 };

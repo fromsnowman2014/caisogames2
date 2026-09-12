@@ -753,5 +753,121 @@ console.log('\nBanner queue:');
   await browser.close();
 }
 
+// 18. THE WALLET. Coins were always banked correctly, but the game never
+//     showed a running total, so a player saving up across several runs had
+//     no way to see it and reasonably concluded their coins were being wiped.
+//     These lock in both the data AND the fact that it is visible.
+console.log('\nWallet:');
+{
+  const { browser, page } = await open(webkit, TARGETS[0].ctx);
+  const e = await page.evaluate(() => {
+    const o = {};
+    const runWorth = (coins) => {
+      restart(); started = true; stats.runCoins = coins; lives = 1; die('fall');
+    };
+    save.wallet = 0; save.totalCoins = 0; save.owned = []; save.best = 9999;
+    runWorth(40); const a = save.wallet;
+    runWorth(35); const b2 = save.wallet;
+    runWorth(25);
+    o.coinsAccumulateAcrossRuns = a === 40 && b2 === 75 && save.wallet === 100;
+
+    // the savings goal that makes the accumulation legible
+    save.wallet = 0;
+    const nu = nextUnlock();
+    o.thereIsAVisibleSavingsGoal = !!nu && nu.item.price > 0;
+    o.theGoalIsTheCheapestOneLeft = !SHOP[nu.slot].some(i =>
+      i.price > 0 && i.price < nu.item.price && !hasItem(nu.slot, i.id) &&
+      (!i.needBest || save.best >= i.needBest));
+    save.wallet = 999999;
+    o.noGoalOnceEverythingIsAffordable = nextUnlock() === null;
+    // never dangle something the player has not earned the record for
+    save.wallet = 0; save.best = 0;
+    const nu2 = nextUnlock();
+    o.recordLockedItemsAreNotDangled = !nu2 || !nu2.item.needBest;
+    save.best = 9999;
+    restart();
+    return o;
+  });
+  for (const [k, v] of Object.entries(e)) ok(v === true, k);
+
+  // and it survives a reload, which is what the player actually experiences
+  await page.evaluate(() => { save.wallet = 777; persist(); });
+  await page.reload();
+  await page.waitForTimeout(1100);
+  const kept = await page.evaluate(() => save.wallet);
+  ok(kept === 777, 'the wallet survives a reload', String(kept));
+  await browser.close();
+}
+
+// 19. HERO, the fourth evolution. Flight had been locked behind a 2600-coin
+//     item, which is the one thing this game has never done - every other
+//     strong power is reachable by playing well.
+console.log('\nHERO evolution:');
+{
+  const { browser, page } = await open(webkit, TARGETS[0].ctx);
+  const e = await page.evaluate(() => {
+    const o = {};
+    const toHero = () => { restart(); started = true; evolve(); evolve(); evolve(); };
+
+    o.thereAreFourStages = STAGES.length === 4 && STAGES[3].name === 'HERO';
+    restart(); started = true; evolve(); evolve();
+    cores.length = 0; spawnEvolutionCore();
+    o.aThirdCoreIsOfferedAfterBlaze = cores.length === 1;
+    evolve(); cores.length = 0; spawnEvolutionCore();
+    o.nothingIsOfferedBeyondHero = cores.length === 0;
+
+    toHero();
+    o.heroHasFourJumps = 1 + maxAirJumps() === 4;
+    o.heroArrivesFuelled = heroFuel === HERO_FLIGHT_MAX;
+
+    player.grounded = false; player.y = 300; player.velocityY = 0; jumpHeld = true;
+    const y0 = player.y;
+    for (let i = 0; i < 30; i++) updatePlayer();
+    o.heroCanFly = player.y < y0 && flying === true;
+    const low = heroFuel;
+    o.flyingDrainsTheFuel = low < HERO_FLIGHT_MAX;
+
+    jumpHeld = false; player.grounded = true;
+    for (let i = 0; i < 60; i++) updatePlayer();
+    o.fuelRefillsOnTheGround = heroFuel > low;
+    const mid = heroFuel; player.grounded = false;
+    for (let i = 0; i < 60; i++) updatePlayer();
+    o.fuelNeverRefillsMidAir = heroFuel === mid;
+
+    // hovering forever must be impossible by construction
+    toHero(); player.grounded = false; jumpHeld = true; player.y = 300;
+    for (let i = 0; i < HERO_FLIGHT_MAX + 200; i++) updatePlayer();
+    o.theFuelRunsOutAndYouFall = heroFuel <= 0 && !flying && player.velocityY > 0;
+
+    // The Super Suit must still be worth its price.
+    save.wallet = 99999; save.best = 9999;
+    buyItem('rocket', SHOP.rocket[3]);
+    restart(); started = true;
+    o.theSuitStillFliesFromSecondOne = hasSuit() && stage === 1;
+    o.theSuitsBudgetIsFarBigger = FLIGHT_FRAMES > HERO_FLIGHT_MAX * 3;
+    restart(); started = true; evolve(); evolve(); evolve();
+    const f0 = flightMeter, h0 = heroFuel;
+    player.grounded = false; jumpHeld = true;
+    for (let i = 0; i < 30; i++) updatePlayer();
+    o.theFiniteBudgetIsSpentFirst = flightMeter < f0 && heroFuel === h0;
+    for (let i = 0; i < FLIGHT_FRAMES + 10; i++) updatePlayer();
+    o.aBurntSuitLeavesHeroFlightIntact = suitBurned && heroCanFly();
+    save.equip.rocket = 'none';
+
+    // Gaps are sized for JUMPS, never assuming flight - an empty tank must
+    // never leave the player facing a gap they cannot jump.
+    restart(); scrollSpeed = 8;
+    const widths = [];
+    for (let st = 0; st < 4; st++) { stage = st; widths.push(gapRange()[1]); }
+    o.gapsGrowWithEachStage = widths.every((v, i) => i === 0 || v > widths[i - 1]);
+    stage = 3;
+    o.heroGapsAssumeJumpsNotFlight = gapRange()[1] < 864 * 0.8;
+    restart();
+    return o;
+  });
+  for (const [k, v] of Object.entries(e)) ok(v === true, k);
+  await browser.close();
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);
