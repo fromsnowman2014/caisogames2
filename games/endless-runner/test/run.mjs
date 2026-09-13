@@ -583,7 +583,7 @@ console.log('\nLevels and hazards:');
     // Hazards arrive one at a time, each with a level to itself to learn it.
     distance = 0;         o.noHazardsAtTheStart = crumbleChance() === 0 && fakeChance() === 0;
     distance = 3000 * 2;  o.crumblersFromLevelThree = crumbleChance() > 0 && fakeChance() === 0;
-    distance = 3000 * 4;  o.fakesFromLevelFive = fakeChance() > 0;
+    distance = 3000 * 5;  o.fakesFromLevelSix = fakeChance() > 0;   // moved: level 6 is MIRAGE now
     distance = 29999;     o.hazardRatesStayBounded = crumbleChance() <= 0.45 && fakeChance() <= 0.40;
 
     // A fake is scenery and must never hold the player up.
@@ -1022,6 +1022,132 @@ console.log('\nSave on every change:');
   ok(r.from === 'backup' && r.wallet === 5555 && r.best === 321,
      'a corrupt primary recovers from the backup', JSON.stringify(r));
   ok(r.primary === 5555, 'and the primary is repaired immediately', String(r.primary));
+  await browser.close();
+}
+
+// 23. TRIPWIRES, SPRINGS, PORTALS - the level 2 / 4 / 7 additions.
+console.log('\nTripwires:');
+{
+  const { browser, page } = await open(webkit, TARGETS[0].ctx);
+  const e = await page.evaluate(() => {
+    const o = {};
+    o.levelTwoIsTripwire = LEVELS[1].name === 'TRIPWIRE';
+    distance = 0;    o.noWiresAtLevelOne = wireChance() === 0;
+    distance = 3000; o.wiresFromLevelTwo = wireChance() > 0;
+    restart(); started = true;
+    const l0 = lives, st0 = stage;
+    wires.length = 0; wires.push({ x: PLAYER_X, y: GROUND_Y, w: 46, hit: false });
+    player.y = GROUND_Y - PLAYER_H; player.grounded = true; combo = 7;
+    checkCollisions();
+    o.runningIntoAWireStumbles = stunTimer === STUN_FRAMES && wires[0].hit;
+    o.aStumbleNeverCostsALife = lives === l0 && stage === st0 && !gameOver;
+    o.aStumbleWipesTheCombo = combo === 0;
+    jumpBuffer = 5; jumpHeld = true; player.velocityY = 0; tryJump();
+    o.noJumpingWhileStunned = player.velocityY === 0;
+    for (let i = 0; i < STUN_FRAMES; i++) updatePlayer();
+    jumpBuffer = 5; jumpHeld = true; player.velocityY = 0; player.grounded = true; coyoteFrames = 1; tryJump();
+    o.jumpingReturnsAfterTheStun = player.velocityY === JUMP_STRENGTH;
+    restart(); started = true;
+    wires.length = 0; wires.push({ x: PLAYER_X, y: GROUND_Y, w: 46, hit: false });
+    player.y = GROUND_Y - PLAYER_H - 40; player.grounded = false; player.velocityY = -3;
+    checkCollisions();
+    o.aHopClearsTheWire = stunTimer === 0 && !wires[0].hit;
+    // the fairness rule: a stumble can never end at a pit
+    restart(); distance = 3000 * 8;
+    let placed = 0, unsafe = 0;
+    for (let i = 0; i < 400; i++) {
+      generatePlatform();
+      for (const w of wires) {
+        const pl = platforms.find(q => !q.fake && w.x >= q.x && w.x <= q.x + q.width);
+        if (!pl) continue; placed++;
+        if (pl.x + pl.width - w.x < STUN_RUNWAY) unsafe++;
+        for (const sp of spikes) if (Math.abs(sp.x - w.x) < STUN_RUNWAY) unsafe++;
+      }
+      if (platforms.length > 40) { const cut = platforms[platforms.length - 15].x;
+        platforms = platforms.slice(-15); wires = wires.filter(w => w.x > cut); spikes = spikes.filter(x => x.x > cut); }
+    }
+    o.wiresArePlaced = placed > 20;
+    o.everyWireLeavesRecoveryRunway = unsafe === 0;
+    o.runwayCoversTheStunAtTopSpeed = STUN_RUNWAY >= STUN_FRAMES * MAX_SPEED;
+    restart(); return o;
+  });
+  for (const [k, v] of Object.entries(e)) ok(v === true, k);
+  await browser.close();
+}
+
+console.log('\nSprings:');
+{
+  const { browser, page } = await open(webkit, TARGETS[0].ctx);
+  const e = await page.evaluate(() => {
+    const o = {};
+    distance = 3000 * 2; o.noSpringsBeforeLevelFour = springChance() === 0;
+    distance = 3000 * 3; o.springsFromLevelFour = springChance() > 0;
+    const put = () => { springs.length = 0; springs.push({ x: PLAYER_X, y: GROUND_Y, w: 34, pressed: 0 }); return springs[0]; };
+    restart(); started = true; const sp = put();
+    player.y = GROUND_Y - PLAYER_H; player.velocityY = 3; player.grounded = false; player.isJumping = true;
+    checkCollisions();
+    o.landingOnASpringLaunches = player.velocityY === SPRING_LAUNCH && springArc && sp.pressed > 0;
+    o.launchRefillsAirJumpsForCorrection = player.airJumps === maxAirJumps();
+    const flight = (launch, arc) => { let y = 0, v = launch, f = 0, top = 0;
+      while (f < 600) { v += arc ? SPRING_GRAVITY : (v < 0 ? GRAVITY : GRAVITY_FALL);
+        if (!arc && v > MAX_FALL_SPEED) v = MAX_FALL_SPEED; y += v; f++; if (y < top) top = y;
+        if (y >= 0 && f > 2) break; } return { frames: f, height: -top }; };
+    const n = flight(JUMP_STRENGTH, false), s2 = flight(SPRING_LAUNCH, true);
+    o.theArcIsHighAndSlow = s2.height > n.height * 2 && s2.frames > n.frames * 2.2;
+    o.theArcStaysUnderTheCeiling = s2.height < (GROUND_Y - PLAYER_H - FLY_CEIL);
+    restart(); started = true; evolve(); put();
+    player.y = GROUND_Y - PLAYER_H; player.velocityY = 3; player.grounded = false; player.isJumping = true;
+    checkCollisions();
+    player.velocityY = 4; jumpBuffer = 5; jumpHeld = true; coyoteFrames = 0; tryJump();
+    o.anAirJumpRetakesControlOfTheArc = springArc === false && player.velocityY < 0;
+    restart(); started = true; put();
+    player.y = GROUND_Y - PLAYER_H - 60; player.velocityY = -4; player.grounded = false;
+    checkCollisions();
+    o.hoppingOverDoesNotFireIt = springArc === false;
+    restart(); return o;
+  });
+  for (const [k, v] of Object.entries(e)) ok(v === true, k);
+  await browser.close();
+}
+
+console.log('\nPortals:');
+{
+  const { browser, page } = await open(webkit, TARGETS[0].ctx);
+  const e = await page.evaluate(() => {
+    const o = {};
+    distance = 3000 * 5; o.noPortalsBeforeSeven = portalChance() === 0;
+    distance = 3000 * 6; o.portalsFromSeven = portalChance() > 0;
+    restart(); distance = 3000 * 8; portals.length = 0;
+    portals.push({ inX: 700, inY: GROUND_Y - 30, outX: null, outY: 0, used: false, spin: 0 });
+    recycleWorld();
+    const pt = portals[0];
+    const under = pt.outX !== null && platforms.find(q => !q.fake && !q.crumble && pt.outX >= q.x && pt.outX <= q.x + q.width);
+    o.theExitResolvesAboveARealPlatform = !!under && pt.outY === under.y - 96;
+    o.theExitIsVisibleBeforeTheEntry = pt.outX !== null && pt.outX > pt.inX + WARP_MIN - 1;
+    const mk = () => { portals.length = 0; portals.push({ inX: PLAYER_X + PLAYER_W / 2, inY: player.y + PLAYER_H / 2,
+      outX: PLAYER_X + 440, outY: GROUND_Y - 96, used: false, spin: 0 }); };
+    restart(); started = true; evolve(); distance = 3000 * 8; mk();
+    const d0 = distance, s0 = score, aj = player.airJumps;
+    player.y = GROUND_Y - PLAYER_H; player.grounded = true; checkCollisions();
+    o.enteringWarpsAndPaysTheBonus = portals[0].used && score - s0 >= WARP_BONUS;
+    o.aWarpNeverCreditsDistance = distance === d0;
+    o.youExitWithAirJumpsSpent = player.airJumps === 0 && aj > 0;
+    o.youExitFallingAtTheExit = player.y === GROUND_Y - 96 && !player.grounded;
+    restart(); started = true; distance = 3000 * 8; mk(); spikes.length = 0;
+    spikes.push({ x: PLAYER_X + 430, y: GROUND_Y - 30, size: 30, near: Infinity, scored: false });
+    spikes.push({ x: PLAYER_X + 600, y: GROUND_Y - 30, size: 30, near: Infinity, scored: false });
+    player.y = GROUND_Y - PLAYER_H; player.grounded = true; checkCollisions();
+    o.onlyASpikeDirectlyUnderTheExitIsCleared = spikes.length === 1 && spikes[0].x > PLAYER_X + 100;
+    restart(); started = true; mk();
+    player.y = GROUND_Y - PLAYER_H - 90; player.grounded = false; player.velocityY = -4; checkCollisions();
+    o.jumpingOverTheEntryDeclines = portals[0].used === false;
+    restart(); started = true; distance = 3000 * 8;
+    cores.length = 0; cores.push({ x: PLAYER_X + 200, y: 300, taken: false, bob: 0, spin: 0 }); mk();
+    player.y = GROUND_Y - PLAYER_H; player.grounded = true; checkCollisions(); recycleWorld();
+    o.aSkippedCoreIsReofferedNotLost = cores.length === 1 && cores[0].x > PLAYER_X;
+    restart(); return o;
+  });
+  for (const [k, v] of Object.entries(e)) ok(v === true, k);
   await browser.close();
 }
 

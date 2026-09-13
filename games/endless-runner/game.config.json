@@ -1,8 +1,8 @@
 {
   "id": "endless-runner",
   "name": "Turbo Dash",
-  "version": "7.2.0",
-  "description": "A colorful endless runner platformer across ten named difficulty levels. Dodge crumbling and fake platforms, evolve mid-run, spend coins at a merchant balloon without breaking stride, keep a pet, and chase a live shared leaderboard.",
+  "version": "8.0.0",
+  "description": "A colorful endless runner platformer across ten named difficulty levels. Jump tripwires, ride springs, read portals, dodge crumbling and fake platforms, evolve mid-run, spend coins at a merchant balloon, keep a pet, and chase a live shared leaderboard.",
   "author": "CaisoGames AI Team",
   "genre": "Endless Runner Platformer",
   "tags": [
@@ -70,7 +70,12 @@
     "Every change is written to storage at once - no throttle, no unsaved window",
     "Two on-disk copies: the previous state is rotated to a backup before each write, and a corrupt primary is recovered from it and repaired on the spot",
     "Writes fire on pagehide, beforeunload, blur, freeze and visibilitychange, plus a 1s heartbeat while playing",
-    "A tick lights beside the wallet on every successful save, so saving is something the player can watch happen"
+    "A tick lights beside the wallet on every successful save, so saving is something the player can watch happen",
+    "Tripwires (level 2+): the first hazard, and the only one that never kills - run into one and you stumble for 0.37s with no jump",
+    "A wire is only placed where the platform runs on for the whole stun distance at top speed, so a stumble can never end at a pit",
+    "Springs (level 4+): a high, slow arc under halved gravity - long enough to see the landing and steer with an air jump",
+    "Portals (level 7+): both rings drawn so the exit is readable first; a warp pays +150 but skips the loot between and spends your air jumps",
+    "Skipped portal distance is never credited to distance, level, biome or speed"
   ],
   "stats": {
     "playtime": "1-5 minutes per run",
@@ -94,7 +99,10 @@
       "Suit flight budgeting",
       "Hazard reading",
       "Mid-run purchasing",
-      "Pet companions"
+      "Pet companions",
+      "Tripwire timing",
+      "Spring arcs",
+      "Portal reading"
     ],
     "unique": [
       "Missions pay out a visible ability rather than an abstract score bonus",
@@ -108,7 +116,10 @@
       "Mid-run shopping is a pickup rather than a menu, because a menu would stop the run",
       "Pets may ease the run or fatten the wallet, but never inflate the score",
       "Flight is reachable by skill (HERO) as well as by purchase, keeping the game's rule that strong powers are earned",
-      "HERO's short rechargeable burst and the Super Suit's large one-shot budget stay distinct, so buying the suit still buys something"
+      "HERO's short rechargeable burst and the Super Suit's large one-shot budget stay distinct, so buying the suit still buys something",
+      "The stumble is the only non-lethal hazard, so it is the first one taught",
+      "A spring's slowness is its fairness: the arc is long enough to react to",
+      "A portal shows its exit before you commit, and costs air jumps and loot, so it is a decision rather than a gift"
     ]
   },
   "difficulty": {
@@ -123,8 +134,8 @@
       },
       {
         "n": 2,
-        "name": "STEPPING UP",
-        "adds": "Floating platforms"
+        "name": "TRIPWIRE",
+        "adds": "Tripwires - jump them or stumble"
       },
       {
         "n": 3,
@@ -133,28 +144,28 @@
       },
       {
         "n": 4,
+        "name": "SPRINGBOARD",
+        "adds": "Springs - a long, slow leap"
+      },
+      {
+        "n": 5,
         "name": "SPIKE ALLEY",
         "adds": "More spikes"
       },
       {
-        "n": 5,
+        "n": 6,
         "name": "MIRAGE",
         "adds": "Fake platforms"
       },
       {
-        "n": 6,
-        "name": "FAST LANE",
-        "adds": "Tighter gaps"
-      },
-      {
         "n": 7,
-        "name": "HIGH WIRE",
-        "adds": "Narrower platforms"
+        "name": "WARP ZONE",
+        "adds": "Portals - read the exit first"
       },
       {
         "n": 8,
-        "name": "DOUBLE TROUBLE",
-        "adds": "More fakes and crumbles"
+        "name": "FAST LANE",
+        "adds": "Tighter gaps, narrower platforms"
       },
       {
         "n": 9,
@@ -253,9 +264,12 @@
       "each coin and purchase is on disk immediately; unchanged state is not rewritten",
       "the previous state rotates to a backup, and garbage is never rotated into it",
       "a corrupt primary recovers from the backup and is repaired at once",
-      "pagehide, beforeunload, blur, freeze and the 1s heartbeat each write"
+      "pagehide, beforeunload, blur, freeze and the 1s heartbeat each write",
+      "tripwires stumble without costing a life, block jumping only for the stun, and always leave recovery runway",
+      "springs fire only on a descending landing, arc high and slow under the ceiling, and yield to an air jump",
+      "portals resolve an exit above a real platform, pay the bonus without crediting distance, spend air jumps, and can be declined"
     ],
-    "checks": 168
+    "checks": 199
   },
   "progression": {
     "type": "in-run evolution",

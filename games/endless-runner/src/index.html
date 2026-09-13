@@ -431,6 +431,7 @@ function releaseJump() {
  */
 function tryJump() {
   if (jumpBuffer <= 0) return;
+  if (stunTimer > 0) return;                  // stumbling: no jump for you
   // While flight is available, holding IS the control: a jump would fight it.
   if (hasSuit() || heroCanFly()) { jumpBuffer = 0; return; }
 
@@ -456,6 +457,7 @@ function tryJump() {
     // Each successive jump is weaker than the last, so the third is a nudge
     // rather than a fourth storey. That keeps the ceiling bounded: even at
     // stage 3 the player cannot simply fly over the level.
+    springArc = false;                              // an air jump retakes control
     const used = maxAirJumps() - player.airJumps;   // 0 for the first air jump
     const power_ = Math.pow(0.82, used);
     player.airJumps--;
@@ -719,6 +721,9 @@ function playSfx(name) {
     case "buy":    tone(880, 0.16, "triangle", 0.18, 1320); break;
     case "heart":  tone(680, 0.20, "triangle", 0.18, 1020); break;
     case "crack":  tone(300, 0.10, "square",   0.12, 220);  break;
+    case "trip":   tone(240, 0.18, "sawtooth", 0.16, 120);  break;
+    case "boing":  tone(220, 0.28, "sine",     0.20, 880);  break;
+    case "warp":   tone(900, 0.30, "sine",     0.18, 180);  break;
     case "crumble":tone(170, 0.34, "sawtooth", 0.16, 70);   break;
     case "fake":   tone(420, 0.26, "sine",     0.16, 130);  break;
     case "levelUp":tone(520, 0.34, "square",   0.18, 1560); break;
@@ -783,16 +788,19 @@ const MAX_LEVEL  = 10;
 const LEVEL_SPAN = 3000;    // 300m per level
 
 const LEVELS = [
-  { n: 1,  name: "WARM UP",        adds: "" },
-  { n: 2,  name: "STEPPING UP",    adds: "Floating platforms" },
-  { n: 3,  name: "CRUMBLE",        adds: "Crumbling platforms" },
-  { n: 4,  name: "SPIKE ALLEY",    adds: "More spikes" },
-  { n: 5,  name: "MIRAGE",         adds: "Fake platforms" },
-  { n: 6,  name: "FAST LANE",      adds: "Tighter gaps" },
-  { n: 7,  name: "HIGH WIRE",      adds: "Narrower platforms" },
-  { n: 8,  name: "DOUBLE TROUBLE", adds: "More fakes and crumbles" },
-  { n: 9,  name: "GAUNTLET",       adds: "Everything, faster" },
-  { n: 10, name: "TURBO HELL",     adds: "Maximum difficulty" }
+  { n: 1,  name: "WARM UP",     adds: "" },
+  // Tripwires are the FIRST hazard because they are the only one that does
+  // not kill. Level 2 had nothing in it; now it teaches jump timing safely
+  // before anything lethal arrives.
+  { n: 2,  name: "TRIPWIRE",    adds: "Tripwires - jump them or stumble" },
+  { n: 3,  name: "CRUMBLE",     adds: "Crumbling platforms" },
+  { n: 4,  name: "SPRINGBOARD", adds: "Springs - a long, slow leap" },
+  { n: 5,  name: "SPIKE ALLEY", adds: "More spikes" },
+  { n: 6,  name: "MIRAGE",      adds: "Fake platforms" },
+  { n: 7,  name: "WARP ZONE",   adds: "Portals - read the exit first" },
+  { n: 8,  name: "FAST LANE",   adds: "Tighter gaps, narrower platforms" },
+  { n: 9,  name: "GAUNTLET",    adds: "Everything, faster" },
+  { n: 10, name: "TURBO HELL",  adds: "Maximum difficulty" }
 ];
 
 function levelOf() {
@@ -943,8 +951,8 @@ function crumbleChance() {
   return Math.min(0.45, 0.18 + (levelT() - 0.22) * 0.5);
 }
 function fakeChance() {
-  if (levelOf() < 5) return 0;
-  return Math.min(0.40, 0.16 + (levelT() - 0.44) * 0.5);
+  if (levelOf() < 6) return 0;
+  return Math.min(0.40, 0.16 + (levelT() - 0.55) * 0.55);
 }
 
 /**
@@ -964,7 +972,7 @@ function fakeChance() {
  * rather than a memory test.
  */
 function maybeAddDecoy(prev, plat) {
-  if (levelOf() < 5) return;
+  if (levelOf() < 6) return;
   const gap = plat.x - (prev.x + prev.width);
   if (gap < 150) return;                 // no room to bait anything
   if (Math.random() > fakeChance()) return;
@@ -982,6 +990,169 @@ function maybeAddDecoy(prev, plat) {
     fallen: false,
     tufts: null
   });
+}
+
+/* ---------------------------------------------------------------------------
+   TRIPWIRES (level 2+)
+   ----------------------------------------------------------------------------
+   A low taut line between two posts. Run into it and you STUMBLE: a short
+   window with no jumping, your combo gone and your air jumps spent. It never
+   costs a life.
+
+   The danger in an auto-runner is what a stumble does NEXT: with the world
+   still scrolling, a no-jump window that ends at a pit is a death the player
+   could do nothing about. So two rules keep it honest. The window is short
+   (STUN_FRAMES, ~0.37s), and a wire is only ever placed where the platform
+   continues for at least STUN_RUNWAY beyond it - the distance the stumble can
+   carry you at top speed, plus margin. You always have ground to recover on.
+   ------------------------------------------------------------------------ */
+
+const STUN_FRAMES = 22;
+const STUN_RUNWAY = STUN_FRAMES * MAX_SPEED + 40;   // 260px of guaranteed floor
+
+let wires;
+let stunTimer;      // >0: stumbling, cannot jump
+
+function wireChance() {
+  if (levelOf() < 2) return 0;
+  return Math.min(0.42, 0.22 + levelT() * 0.3);
+}
+
+function stumble() {
+  stunTimer = STUN_FRAMES;
+  combo = 0; comboTimer = 0;
+  player.airJumps = 0;
+  holdFrames = 0;
+  if (player.velocityY < 0) player.velocityY = 1;   // a jump in progress is cut
+  addPopup("TRIPPED!", "#FFB86C");
+  playSfx("trip");
+  shake(5);
+  spawnDust(10, PLAYER_X + PLAYER_W / 2, player.y + PLAYER_H);
+}
+
+/* ---------------------------------------------------------------------------
+   SPRINGS (level 4+)
+   ----------------------------------------------------------------------------
+   Land on one and it fires you into a HIGH, SLOW arc - gravity is halved for
+   the whole flight, so you hang in the air for a long time and travel a long
+   way. That slowness is not decoration, it is the fairness: the arc is long
+   enough to see the landing coming and steer with an air jump.
+
+   The generator does not size gaps for a spring flight. That is deliberate.
+   The player chooses to step on it (a small hop clears it), and where a long
+   floaty arc puts you down is the whole gamble. A spring refills the air
+   jumps on launch so a bad landing is correctable, not fatal by default.
+   ------------------------------------------------------------------------ */
+
+// -19, not higher: at -21 the arc peaked above the flight ceiling, so the
+// player stalled against the top of the screen mid-flight. -19 tops out
+// ~376px up with room to spare, and still hangs 2.3x longer than a jump.
+const SPRING_LAUNCH = -19;
+const SPRING_GRAVITY = 0.48;       // both rising and falling, while in the arc
+
+let springs;
+let springArc;      // true from launch until the next landing or air jump
+
+function springChance() {
+  if (levelOf() < 4) return 0;
+  return Math.min(0.30, 0.16 + (levelT() - 0.33) * 0.3);
+}
+
+function launchFromSpring(sp) {
+  sp.pressed = 12;
+  player.velocityY = SPRING_LAUNCH;
+  player.grounded = false; player.isJumping = true;
+  player.airJumps = maxAirJumps();
+  springArc = true;
+  holdFrames = 0; jumpBuffer = 0;
+  airFrames = 0;
+  addPopup("BOING!", "#7FD4E6");
+  playSfx("boing");
+  shake(4);
+  spawnDust(10, PLAYER_X + PLAYER_W / 2, player.y + PLAYER_H);
+}
+
+/* ---------------------------------------------------------------------------
+   PORTALS (level 7+)
+   ----------------------------------------------------------------------------
+   Run into the entry ring and you come out of the exit ring further down the
+   track. Jump over the entry to decline.
+
+   A plain shortcut would be a free gift with nothing to decide, so it costs
+   something and shows you the bill first. Both rings are drawn, so you can
+   read where you will land before committing. Taking it pays a WARP bonus,
+   but you skip every coin and pickup in between, and you come out with your
+   air jumps SPENT - falling onto whatever is under the exit with no way to
+   correct. A narrow slab, a crumbler, a wire: you saw it, you chose it.
+
+   Skipped distance is not credited to distance, level, biome or speed - the
+   same rule a revive follows - so a warp is a bonus, never a teleport up the
+   difficulty curve.
+
+   The exit needs a platform that may not exist yet when the entry is placed,
+   so exits resolve lazily as the generator runs ahead; a pending portal pulls
+   generation forward so its exit is visible well before you reach the entry.
+   ------------------------------------------------------------------------ */
+
+const WARP_MIN = 360, WARP_MAX = 560;
+const WARP_BONUS = 150;
+const PORTAL_R = 26;
+
+let portals;
+
+function portalChance() {
+  if (levelOf() < 7) return 0;
+  return Math.min(0.28, 0.14 + (levelT() - 0.66) * 0.4);
+}
+
+/** Give any exit-less portal a landing platform, once one exists ahead of it. */
+function resolvePortalExits() {
+  for (const pt of portals) {
+    if (pt.outX !== null) continue;
+    for (const q of platforms) {
+      if (q.fake || q.crumble) continue;
+      if (q.x < pt.inX + WARP_MIN || q.x > pt.inX + WARP_MAX) continue;
+      if (q.width < 110) continue;
+      pt.outX = q.x + q.width * 0.4;
+      pt.outY = q.y - 96;
+      break;
+    }
+  }
+}
+
+function warpThrough(pt) {
+  pt.used = true;
+  const dx = pt.outX - PLAYER_X;
+  if (dx > 0) {
+    for (const q of platforms) q.x -= dx;
+    for (const c of coins)     c.x -= dx;
+    for (const sp of spikes)   sp.x -= dx;
+    for (const pu of powerups) pu.x -= dx;
+    for (const co of cores)    co.x -= dx;
+    for (const wr of wires)    wr.x -= dx;
+    for (const sg of springs)  sg.x -= dx;
+    for (const q of portals)   { q.inX -= dx; if (q.outX !== null) q.outX -= dx; }
+  }
+  // No air jumps out the far side - you read the exit, now you live with it.
+  // A spike DIRECTLY under the exit would be an unreadable death, so that one
+  // thing is cleared; everything else you could see stays.
+  spikes = spikes.filter(sp => Math.abs(sp.x - PLAYER_X) > 70);
+  player.y = pt.outY;
+  player.velocityY = 2;
+  player.grounded = false; player.isJumping = true;
+  player.airJumps = 0;
+  springArc = false;
+  addScore(WARP_BONUS);
+  addPopup("WARP!  +" + WARP_BONUS, "#FF9F5A");
+  playSfx("warp");
+  hitStop = 3;
+  shake(6);
+  for (let i = 0; i < 24; i++) {
+    const a = Math.random() * Math.PI * 2;
+    particles.push({ x: PLAYER_X + PLAYER_W / 2, y: player.y + PLAYER_H / 2,
+      vx: Math.cos(a) * rand(1, 4), vy: Math.sin(a) * rand(1, 4),
+      life: randInt(16, 30), size: rand(2, 5), color: i % 2 ? "#FF9F5A" : "#7FD4E6" });
+  }
 }
 
 /**
@@ -1016,11 +1187,11 @@ function generatePlatform() {
   const floatChance = levelOf() < 2 ? 0.08 : Math.min(0.42, 0.22 + levelT() * 0.25);
   const isFloating = Math.random() < floatChance;
 
-  let y, width, type, wantsSpike = false;
+  let y, width, type, wantsSpike = false, wantsWire = false;
   if (isFloating) {
     type  = "floating";
     // Level 7 starts shaving the landing area itself.
-    const shrink = levelOf() >= 7 ? (1 - (levelT() - 0.66) * 0.55) : 1;
+    const shrink = levelOf() >= 8 ? (1 - (levelT() - 0.77) * 0.6) : 1;
     width = rand(100, 150) * shrink;
     // Stay within one jump of the platform we are leaving.
     const highest = Math.max(MIN_PLAT_Y, last.y - MAX_STEP_UP);
@@ -1032,7 +1203,13 @@ function generatePlatform() {
     // make it extra wide, so the spike still fits comfortably PAST the
     // landing zone (see decoratePlatform) instead of ambushing the player.
     wantsSpike = Math.random() < spikeChance();
-    width = wantsSpike ? rand(340, 430) : rand(150, 400);
+    // A wire needs the landing zone PLUS the whole stun runway after it, which
+    // no ordinary platform is long enough to hold. So the platform is decided
+    // first and built to fit - the same rule spikes already follow.
+    wantsWire = !wantsSpike && Math.random() < wireChance();
+    width = wantsSpike ? rand(340, 430)
+          : wantsWire  ? rand(LANDING_ZONE + STUN_RUNWAY + 40, LANDING_ZONE + STUN_RUNWAY + 120)
+          : rand(150, 400);
   }
 
   // Charge the climb against the horizontal budget so the jump stays possible.
@@ -1063,7 +1240,7 @@ function generatePlatform() {
   // the real one - the generator walks backwards from it to place the next.
   maybeAddDecoy(last, plat);
 
-  decoratePlatform(plat, wantsSpike);
+  decoratePlatform(plat, wantsSpike, wantsWire);
 }
 
 // A jump can carry the player a fair way onto the next platform, so the first
@@ -1072,7 +1249,7 @@ function generatePlatform() {
 const LANDING_ZONE = 200;
 
 /** Scatter coins and obstacles onto a freshly created platform. */
-function decoratePlatform(plat, wantsSpike) {
+function decoratePlatform(plat, wantsSpike, wantsWire) {
   // --- Spikes sit past the landing zone and never within 70px of the far
   //     edge, so there is always somewhere safe to land and room to react. ---
   let spikeX = null;
@@ -1081,6 +1258,38 @@ function decoratePlatform(plat, wantsSpike) {
     // near/scored drive the "close call" bonus in checkCollisions.
     spikes.push({ x: spikeX, y: plat.y - 30, size: 30,
                   near: Infinity, scored: false });
+  }
+
+  // --- Tripwire: only where the platform runs on long enough to recover. ---
+  let wireX = null;
+  if (wantsWire && plat.width >= LANDING_ZONE + STUN_RUNWAY) {
+    const lo = plat.x + LANDING_ZONE * 0.6;
+    const hi = plat.x + plat.width - STUN_RUNWAY;
+    if (hi > lo) {
+      wireX = rand(lo, hi);
+      // Never inside the stun runway of a spike, in either order.
+      if (spikeX === null || Math.abs(wireX - spikeX) > STUN_RUNWAY) {
+        wires.push({ x: wireX, y: plat.y, w: 46, hit: false });
+      } else { wireX = null; }
+    }
+  }
+
+  // --- Spring: on the surface, clear of anything that would punish the
+  //     landing hop that avoids it. ---
+  if (plat.width > 140 && Math.random() < springChance()) {
+    const sx = plat.x + plat.width * rand(0.35, 0.7);
+    const clear = (spikeX === null || Math.abs(sx - spikeX) > 90) &&
+                  (wireX === null || Math.abs(sx - wireX) > 90);
+    if (clear) springs.push({ x: sx, y: plat.y, w: 34, pressed: 0 });
+  }
+
+  // --- Portal entry: on the surface, past the landing zone. ---
+  if (plat.type === "ground" && plat.width > 220 && Math.random() < portalChance()) {
+    const ix = plat.x + rand(LANDING_ZONE, plat.width - 60);
+    const clear = (spikeX === null || Math.abs(ix - spikeX) > 90) &&
+                  (wireX === null || Math.abs(ix - wireX) > 90);
+    if (clear) portals.push({ inX: ix, inY: plat.y - 30, outX: null, outY: 0,
+                              used: false, spin: Math.random() * 6 });
   }
 
   // --- Coins: 30% chance, arranged in a straight line or a gentle arc. ---
@@ -2245,6 +2454,7 @@ function updatePlayer() {
   // Asymmetric gravity: float up, drop fast. See the GRAVITY constants.
   // Flight supplies its own vertical motion, so gravity steps aside for it.
   const g = flying ? 0
+                   : springArc ? SPRING_GRAVITY
                    : (player.velocityY < 0 ? GRAVITY
                                            : (gliding ? GRAVITY_FALL * 0.30 : GRAVITY_FALL));
   player.velocityY += g;
@@ -2272,6 +2482,7 @@ function updatePlayer() {
 
   if (squashTimer > 0) squashTimer--;
   if (jumpBuffer > 0) jumpBuffer--;
+  if (stunTimer > 0) stunTimer--;
   // Flight is not hang time: it must not accumulate toward the big-air bonus,
   // or a long glide across the sky would pay out like a daring jump.
   if (!player.grounded && !flying) airFrames++;
@@ -2305,6 +2516,9 @@ function scrollWorld() {
   for (const c of coins)     c.x -= s;
   for (const sp of spikes)   sp.x -= s;
   for (const pu of powerups) { pu.x -= s; pu.bob += 0.09; }
+  for (const wr of wires)    wr.x -= s;
+  for (const sp of springs)  { sp.x -= s; if (sp.pressed > 0) sp.pressed--; }
+  for (const pt of portals)  { pt.inX -= s; if (pt.outX !== null) pt.outX -= s; pt.spin += 0.12; }
   for (const co of cores)    { co.x -= s; co.bob += 0.07; co.spin += 0.11; }
 
   for (const p of popups) { p.x -= s; p.y += p.vy; p.life--; }
@@ -2376,6 +2590,9 @@ function recycleWorld() {
   spikes    = spikes.filter(s => s.x + s.size > -40);
   particles = particles.filter(p => p.life > 0);
   powerups  = powerups.filter(p => p.x > -40 && !p.taken);
+  wires     = wires.filter(w => w.x + w.w > -40);
+  springs   = springs.filter(q => q.x + q.w > -40);
+  portals   = portals.filter(q => (q.outX === null ? q.inX : q.outX) > -60);
   // A core that scrolls past uncollected is NOT thrown away. The player earned
   // it by finishing a mission; losing it to a single mistimed jump would make
   // the reward feel arbitrary and punish the exact moment it should celebrate.
@@ -2385,12 +2602,17 @@ function recycleWorld() {
   for (let i = 0; i < missedCores; i++) spawnEvolutionCore(true);
   popups    = popups.filter(p => p.life > 0);
 
-  // Keep generating until we have ground well past the right edge.
-  let last = platforms[platforms.length - 1];
-  while (last.x + last.width < W + 200) {
+  // Keep generating until we have ground well past the right edge - and far
+  // enough past any portal still waiting for its exit that the exit becomes
+  // visible before the entry is reachable.
+  let need = W + 200;
+  for (const pt of portals) if (pt.outX === null) need = Math.max(need, pt.inX + WARP_MAX + 60);
+  let last = lastRealPlatform();
+  while (last.x + last.width < need) {
     generatePlatform();
-    last = platforms[platforms.length - 1];
+    last = lastRealPlatform();
   }
+  resolvePortalExits();
 }
 
 /**
@@ -2467,6 +2689,7 @@ function checkCollisions() {
 
   // Not standing on anything? Then we are airborne (walked off an edge).
   player.grounded = landed;
+  if (landed) springArc = false;
   if (!landed) {
     player.isJumping = true;
   } else {
@@ -2520,6 +2743,39 @@ function checkCollisions() {
         py + 4 < s.y + s.size) {
       die("spike");
       return;
+    }
+  }
+
+  // --- Portals: overlap the entry ring and you warp. The ring sits on the
+  //     ground, so a jump of any real height passes over it. ---
+  for (const pt of portals) {
+    if (pt.used || pt.outX === null) continue;
+    const dx = cx - pt.inX, dy = cy - pt.inY;
+    if (dx * dx + dy * dy < (PORTAL_R + 6) * (PORTAL_R + 6)) { warpThrough(pt); break; }
+  }
+
+  // --- Springs: land on the coil and it fires. A falling foot on its top
+  //     face is the only trigger, so a hop over it does not. ---
+  for (const sp of springs) {
+    if (sp.pressed > 0) continue;
+    const feet = py + PLAYER_H;
+    if (player.velocityY >= 0 &&
+        px + PLAYER_W - 6 > sp.x && px + 6 < sp.x + sp.w &&
+        feet >= sp.y - 18 && feet <= sp.y + 4) {
+      launchFromSpring(sp);
+      break;
+    }
+  }
+
+  // --- Tripwires: a low line. Clear it with a jump; run into it and stumble.
+  //     Checked against the feet only, so a hop of any real height passes. ---
+  for (const wr of wires) {
+    if (wr.hit) continue;
+    const feet = py + PLAYER_H;
+    if (px + PLAYER_W - 8 > wr.x && px + 8 < wr.x + wr.w &&
+        feet > wr.y - 14 && feet <= wr.y + 2) {
+      wr.hit = true;
+      stumble();
     }
   }
 
@@ -3069,6 +3325,78 @@ function drawCoins() {
   }
 }
 
+function drawPortals() {
+  const ring = (x, y, color, spin, dim) => {
+    if (x < -60 || x > W + 60) return;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.globalAlpha = dim ? 0.45 : 1;
+    const glow = ctx.createRadialGradient(0, 0, 6, 0, 0, PORTAL_R + 16);
+    glow.addColorStop(0, color + "AA"); glow.addColorStop(1, color + "00");
+    ctx.fillStyle = glow;
+    ctx.fillRect(-PORTAL_R - 16, -PORTAL_R - 16, (PORTAL_R + 16) * 2, (PORTAL_R + 16) * 2);
+    ctx.rotate(spin);
+    ctx.lineWidth = 5; ctx.strokeStyle = color;
+    ctx.beginPath(); ctx.ellipse(0, 0, PORTAL_R, PORTAL_R * 0.55, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.lineWidth = 2.5; ctx.strokeStyle = "#FFFFFF";
+    ctx.beginPath(); ctx.ellipse(0, 0, PORTAL_R * 0.62, PORTAL_R * 0.32, 0, 0, Math.PI * 2); ctx.stroke();
+    // orbiting sparks - the "shwoop"
+    ctx.fillStyle = "#FFFFFF";
+    for (let i = 0; i < 3; i++) {
+      const a = spin * 2.3 + i * 2.09;
+      ctx.beginPath();
+      ctx.arc(Math.cos(a) * (PORTAL_R + 4), Math.sin(a) * (PORTAL_R * 0.55 + 4), 2.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  };
+  for (const pt of portals) {
+    ring(pt.inX, pt.inY, "#7FD4E6", pt.spin, pt.used);
+    if (pt.outX !== null) ring(pt.outX, pt.outY, "#FF9F5A", -pt.spin, pt.used);
+  }
+}
+
+function drawSprings() {
+  for (const sp of springs) {
+    if (sp.x > W + 40 || sp.x + sp.w < -40) continue;
+    const h = 18 * (sp.pressed > 0 ? 0.45 : 1);
+    ctx.lineWidth = 2; ctx.strokeStyle = "#12202c";
+    ctx.fillStyle = "#546E7A";
+    ctx.fillRect(sp.x, sp.y - 4, sp.w, 4); ctx.strokeRect(sp.x, sp.y - 4, sp.w, 4);
+    ctx.strokeStyle = "#B0BEC5"; ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    for (let i = 0; i <= 8; i++) ctx.lineTo(sp.x + (i % 2 ? sp.w - 5 : 5), sp.y - 4 - h * (i / 8));
+    ctx.stroke();
+    ctx.fillStyle = "#FF5252"; ctx.strokeStyle = "#12202c"; ctx.lineWidth = 2;
+    ctx.fillRect(sp.x - 2, sp.y - 4 - h - 5, sp.w + 4, 5);
+    ctx.strokeRect(sp.x - 2, sp.y - 4 - h - 5, sp.w + 4, 5);
+  }
+}
+
+function drawWires() {
+  for (const wr of wires) {
+    if (wr.x > W + 40 || wr.x + wr.w < -40) continue;
+    const h = 14;
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "#12202c";
+    ctx.fillStyle = "#6D4C41";
+    ctx.fillRect(wr.x - 3, wr.y - h, 6, h);        ctx.strokeRect(wr.x - 3, wr.y - h, 6, h);
+    ctx.fillRect(wr.x + wr.w - 3, wr.y - h, 6, h); ctx.strokeRect(wr.x + wr.w - 3, wr.y - h, 6, h);
+    ctx.strokeStyle = wr.hit ? "#8a8a8a" : "#E0E0E0";
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.moveTo(wr.x, wr.y - h + 3);
+    ctx.lineTo(wr.x + wr.w, wr.y - h + 3 + (wr.hit ? 6 : 0));
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(255,255,255,0.7)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(wr.x + 6, wr.y - h + 2);
+    ctx.lineTo(wr.x + wr.w * 0.35, wr.y - h + 2);
+    ctx.stroke();
+  }
+}
+
 function drawSpikes() {
   for (const s of spikes) {
     if (s.x > W + 40 || s.x + s.size < -40) continue;
@@ -3134,6 +3462,13 @@ function drawPlayer() {
 
   let [llx, lly, rlx, rly, tiltDeg] = POSES[runFrame];
   let bob = Math.sin(elapsed * 10) * 2;
+
+  // Stumbling: pitched forward and staggering, so the no-jump window is
+  // visible on the character and not only in the input refusing to work.
+  if (stunTimer > 0 && !airborne) {
+    tiltDeg = 22 * (stunTimer / STUN_FRAMES);
+    bob = Math.sin(elapsed * 40) * 3;
+  }
 
   if (airborne) {
     bob = 0;
@@ -4426,6 +4761,9 @@ function render() {
   drawCoins();
   drawPowerups();
   drawCores();
+  drawPortals();
+  drawSprings();
+  drawWires();
   drawSpikes();
   drawPet();
   drawPlayer();
@@ -4526,6 +4864,9 @@ function restart() {
   beatBest = false;
   lives = START_LIVES; reviveFlash = 0; lastLifeWarned = false;
   lifePause = false; lifePauseCause = null;
+  wires = []; stunTimer = 0;
+  springs = []; springArc = false;
+  portals = [];
   shownLevel = 0;
   bannerQueue = []; banner = null;
   stage = 0; cores = []; evolveFlash = 0; coresEarned = 0;
