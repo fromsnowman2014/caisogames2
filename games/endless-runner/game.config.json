@@ -1,7 +1,7 @@
 {
   "id": "endless-runner",
   "name": "Turbo Dash",
-  "version": "7.1.0",
+  "version": "7.2.0",
   "description": "A colorful endless runner platformer across ten named difficulty levels. Dodge crumbling and fake platforms, evolve mid-run, spend coins at a merchant balloon without breaking stride, keep a pet, and chase a live shared leaderboard.",
   "author": "CaisoGames AI Team",
   "genre": "Endless Runner Platformer",
@@ -65,9 +65,12 @@
     "HERO's flight refills only while running on the ground, so hovering forever is impossible by construction",
     "The wallet total and a savings goal are shown during play, on the game-over screen and in the shop",
     "Coins are banked the moment they are collected, so abandoning a run mid-way (app switch, closed tab) loses nothing",
-    "Profile is flushed on pagehide and when the page is hidden, and every write is verified by reading it back",
     "A storage self-test at boot; if saving is blocked the title screen says so instead of failing silently",
-    "Losing a life freezes the run on a LIFE LOST screen until a tap, with CONTINUE and SHOP offered there"
+    "Losing a life freezes the run on a LIFE LOST screen until a tap, with CONTINUE and SHOP offered there",
+    "Every change is written to storage at once - no throttle, no unsaved window",
+    "Two on-disk copies: the previous state is rotated to a backup before each write, and a corrupt primary is recovered from it and repaired on the spot",
+    "Writes fire on pagehide, beforeunload, blur, freeze and visibilitychange, plus a 1s heartbeat while playing",
+    "A tick lights beside the wallet on every successful save, so saving is something the player can watch happen"
   ],
   "stats": {
     "playtime": "1-5 minutes per run",
@@ -172,7 +175,7 @@
     ]
   },
   "createdAt": "2026-09-08",
-  "updatedAt": "2026-09-12",
+  "updatedAt": "2026-09-13",
   "status": "playable",
   "technicalDetails": {
     "engine": "Custom HTML5 Canvas",
@@ -246,9 +249,13 @@
       "coins bank on pickup and the game-over total never double-counts",
       "an abandoned run keeps its coins across a reload",
       "losing a life freezes the run; tap or SPACE resumes without jumping and with a mercy window",
-      "the shop opens from the pause and returns to it; the final death skips the pause"
+      "the shop opens from the pause and returns to it; the final death skips the pause",
+      "each coin and purchase is on disk immediately; unchanged state is not rewritten",
+      "the previous state rotates to a backup, and garbage is never rotated into it",
+      "a corrupt primary recovers from the backup and is repaired at once",
+      "pagehide, beforeunload, blur, freeze and the 1s heartbeat each write"
     ],
-    "checks": 155
+    "checks": 168
   },
   "progression": {
     "type": "in-run evolution",
@@ -419,7 +426,12 @@
   "economy": {
     "walletCarriesBetweenRuns": true,
     "note": "Earlier fix made the running total visible. This one fixes the remaining loss: coins were only credited in finishRun() on the final death, so any run abandoned mid-way lost them. They now bank on pickup and the profile is flushed whenever the page is hidden or unloaded.",
-    "verified": "Seven coins picked up, then the page hidden and unloaded without the run ending: wallet is 507 after a reload (500 + 7)."
+    "verified": "Seven coins picked up, then the page hidden and unloaded without the run ending: wallet is 507 after a reload (500 + 7).",
+    "persistence": {
+      "policy": "synchronous write on every mutation",
+      "why": "A 1.5s throttle left a window iOS could reclaim; a small JSON blob to localStorage costs well under a millisecond, so there was nothing to gain from batching and coins to lose.",
+      "backup": "Primary and backup keys. The previous copy rotates to backup before each write - only if it parses, so garbage never overwrites the intact copy. A corrupt primary loads from backup and is repaired immediately, not on the next coin."
+    }
   },
   "lifePause": {
     "when": "Every life lost except the last",

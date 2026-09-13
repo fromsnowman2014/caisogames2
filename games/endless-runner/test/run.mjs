@@ -961,5 +961,69 @@ console.log('\nLife-lost pause:');
   await browser.close();
 }
 
+// 22. SAVE ON EVERY CHANGE. The throttle that preceded this left a window of
+//     unsaved progress that iOS could reclaim; and saving more often makes a
+//     corrupt write more likely, so the backup copy is guarded as carefully.
+console.log('\nSave on every change:');
+{
+  const { browser, page } = await open(webkit, TARGETS[0].ctx);
+  const e = await page.evaluate(() => {
+    const o = {};
+    const onDisk = () => JSON.parse(localStorage.getItem(SAVE_KEY)).wallet;
+    restart(); started = true; save.wallet = 100; walletCarry = 0; persist();
+    const grab = () => { coins.length = 0;
+      coins.push({ x: PLAYER_X + PLAYER_W / 2, y: player.y + PLAYER_H / 2, collected: false });
+      checkCollisions(); };
+    grab(); o.aCoinIsOnDiskAtOnce = onDisk() === 101;
+    grab(); grab(); o.noThrottleWindowRemains = onDisk() === 103 && onDisk() === save.wallet;
+    const n0 = saveCount; persist(); persist();
+    o.unchangedStateIsNotRewritten = saveCount === n0;
+    o.theSavedTickLights = savedFlash > 0 && storageOk === true;
+
+    // rotation keeps the previous state as a backup
+    save.wallet = 4321; persist(); save.wallet = 4322; persist();
+    o.backupHoldsThePreviousState =
+      JSON.parse(localStorage.getItem(SAVE_KEY_BACKUP)).wallet === 4321;
+
+    // a corrupt primary must never be rotated INTO the backup
+    localStorage.setItem(SAVE_KEY, '{"wallet":9,"bes');
+    lastBody = ''; save.wallet = 4323; persist();
+    let bak = null; try { bak = JSON.parse(localStorage.getItem(SAVE_KEY_BACKUP)); } catch (x) {}
+    o.garbageIsNeverBackedUp = !!bak && typeof bak.wallet === 'number' && bak.wallet !== 9;
+
+    // every lifecycle edge writes
+    const fire = (t, n) => { save.wallet += 1; lastBody = ''; t.dispatchEvent(new Event(n)); return onDisk() === save.wallet; };
+    o.pagehideWrites = fire(window, 'pagehide');
+    o.beforeunloadWrites = fire(window, 'beforeunload');
+    o.blurWrites = fire(window, 'blur');
+    o.freezeWrites = fire(document, 'freeze');
+
+    // the heartbeat catches anything a mutation path forgot
+    save.wallet = 9000; lastBody = ''; lastPersistAt = performance.now() - 5000;
+    update(16);
+    o.heartbeatWritesAMissedChange = onDisk() === 9000;
+    return o;
+  });
+  for (const [k, v] of Object.entries(e)) ok(v === true, k);
+
+  // a corrupt primary falls back to the backup, and is repaired at once
+  await page.evaluate(() => {
+    save.wallet = 5555; save.best = 321; persist();
+    save.wallet = 5556; persist();                 // 5555 is now the backup
+    localStorage.setItem(SAVE_KEY, '{"wallet":5556,"best":3');
+  });
+  await page.reload();
+  await page.waitForTimeout(1100);
+  const r = await page.evaluate(() => {
+    let primary = 'corrupt';
+    try { primary = JSON.parse(localStorage.getItem(SAVE_KEY)).wallet; } catch (x) {}
+    return { from: saveLoadedFrom, wallet: save.wallet, best: save.best, primary };
+  });
+  ok(r.from === 'backup' && r.wallet === 5555 && r.best === 321,
+     'a corrupt primary recovers from the backup', JSON.stringify(r));
+  ok(r.primary === 5555, 'and the primary is repaired immediately', String(r.primary));
+  await browser.close();
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

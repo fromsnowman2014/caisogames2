@@ -1383,6 +1383,7 @@ function updatePowers() {
   if (invuln > 0) invuln--;
   if (evolveFlash > 0) evolveFlash--;
   if (reviveFlash > 0) reviveFlash--;
+  if (savedFlash > 0) savedFlash--;
 
   // Magnet: drag nearby uncollected coins toward the player.
   if (power.magnet > 0) {
@@ -1787,13 +1788,33 @@ function defaultSave() {
            name: "", clientId: "" };
 }
 
+const SAVE_KEY_BACKUP = SAVE_KEY + ".bak";
+let saveLoadedFrom = "none";   // "primary" | "backup" | "none" - shown when not primary
+
 function loadSave() {
-  try {
-    const raw = localStorage.getItem(SAVE_KEY);
-    save = raw ? Object.assign(defaultSave(), JSON.parse(raw)) : defaultSave();
-  } catch (e) {
-    save = defaultSave();      // private mode / blocked storage - play anyway
+  // Two copies on disk. A write that is interrupted part-way (the page killed
+  // mid-setItem, a quota error) leaves a corrupt primary; without a backup the
+  // next boot would parse-fail, start from defaults, and then SAVE those
+  // defaults over the top - wiping every coin and unlock the player owned.
+  // Saving on every change makes that more likely, not less, so it is guarded.
+  save = null;
+  for (const [key, label] of [[SAVE_KEY, "primary"], [SAVE_KEY_BACKUP, "backup"]]) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") {
+        save = Object.assign(defaultSave(), parsed);
+        saveLoadedFrom = label;
+        break;
+      }
+    } catch (e) { /* try the next copy */ }
   }
+  if (!save) { save = defaultSave(); saveLoadedFrom = "none"; }
+  // Loaded from the backup means the primary is corrupt. Repair it at once,
+  // rather than leaving it until the player happens to earn a coin - if they
+  // close the page first, the corrupt copy is still what greets them next time.
+  if (saveLoadedFrom === "backup") { lastBody = ""; persist(); }
 
   // Migrations for saves written before the shop existed. A returning player
   // should find their lifetime coins already in the wallet rather than a zero
@@ -1832,30 +1853,47 @@ function loadSave() {
    ---------------------------------------------------------------------- */
 
 let storageOk = null;         // null = untested, true/false after the probe
-let persistDirty = false;
+let savedFlash = 0;           // frames the on-screen "saved" tick stays lit
+let saveCount = 0;            // writes this session, for the indicator
 let lastPersistAt = 0;
+let lastBody = "";            // skip identical writes - nothing changed
 
+/**
+ * Write the profile NOW. No throttle: a small JSON blob to localStorage is
+ * synchronous and takes well under a millisecond, so writing on every coin is
+ * free, and the alternative - a window of unsaved progress - is exactly what
+ * kept losing the player's coins when iOS reclaimed the page.
+ *
+ * The previous copy is rotated to the backup key BEFORE the new one is
+ * written, so at every instant at least one intact copy exists on disk.
+ */
 function persist() {
+  let body;
+  try { body = JSON.stringify(save); } catch (e) { storageOk = false; return false; }
+  if (body === lastBody) return storageOk;         // nothing changed; no churn
   try {
-    const body = JSON.stringify(save);
+    // Rotate the previous copy to backup - but ONLY if it is valid. Backing up
+    // a corrupt primary would overwrite the one intact copy with garbage.
+    const prev = localStorage.getItem(SAVE_KEY);
+    if (prev && prev !== body) {
+      let valid = false;
+      try { valid = !!JSON.parse(prev); } catch (e) {}
+      if (valid) localStorage.setItem(SAVE_KEY_BACKUP, prev);
+    }
     localStorage.setItem(SAVE_KEY, body);
     // A write that cannot be read back has not happened.
     storageOk = localStorage.getItem(SAVE_KEY) === body;
   } catch (e) {
     storageOk = false;
   }
-  persistDirty = false;
+  if (storageOk) { lastBody = body; saveCount++; savedFlash = 40; }
   lastPersistAt = performance.now();
   return storageOk;
 }
 
-/** Mark the profile changed; it is written within ~1.5s, or at once on exit. */
-function persistSoon() { persistDirty = true; }
-
-function flushPersist(force) {
-  if (!persistDirty) return;
-  if (force || performance.now() - lastPersistAt > 1500) persist();
-}
+// Kept as an alias so every existing call site saves at once.
+function persistSoon() { return persist(); }
+function flushPersist() { return persist(); }
 
 /** Prove the store works by round-tripping a probe key, before anything relies on it. */
 function probeStorage() {
@@ -1873,8 +1911,15 @@ function probeStorage() {
 
 // Whatever is pending must reach disk before the page goes away. pagehide is
 // the reliable one on iOS; visibilitychange covers app switching.
-window.addEventListener("pagehide", () => flushPersist(true));
-document.addEventListener("visibilitychange", () => { if (document.hidden) flushPersist(true); });
+// Every edge that can precede the page going away. iOS does not fire all of
+// them in every situation (a force-quit from the app switcher can fire none),
+// which is why writes happen on every change rather than relying on these -
+// but each one that does fire is one more chance to land the final state.
+window.addEventListener("pagehide",     () => persist());
+window.addEventListener("beforeunload", () => persist());
+window.addEventListener("blur",         () => persist());
+document.addEventListener("freeze",     () => persist());   // Page Lifecycle API
+document.addEventListener("visibilitychange", () => { if (document.hidden) persist(); });
 
 /* ---------------------------------------------------------------------------
    CLOUD LEADERBOARD
@@ -3922,6 +3967,18 @@ function drawUI() {
   outlinedText("(" + save.wallet.toLocaleString() + " saved)", bankX, 76,
                "bold 17px 'Trebuchet MS', sans-serif", "#B9E6FF", "left", 3);
 
+  // A tick that lights on every successful write. The player could not tell
+  // whether saving was happening; now they can watch it happen.
+  const tickX = bankX + ctx.measureText("(" + save.wallet.toLocaleString() + " saved)").width + 10;
+  if (storageOk === false) {
+    outlinedText("✕ not saving", tickX, 76,
+                 "bold 15px 'Trebuchet MS', sans-serif", "#FF6B6B", "left", 3);
+  } else if (savedFlash > 0) {
+    ctx.globalAlpha = Math.min(1, savedFlash / 12);
+    outlinedText("✓", tickX, 76, "bold 18px 'Trebuchet MS', sans-serif", "#50FA7B", "left", 3);
+    ctx.globalAlpha = 1;
+  }
+
   // --- Lives, as hearts. Drawn full then hollow, so the number you have
   //     LOST is visible too - that is what creates the pressure. ---
   for (let i = 0; i < MAX_LIVES; i++) {
@@ -4149,6 +4206,9 @@ function drawTitle() {
   if (storageOk === false) {
     outlinedText("Saving is blocked in this viewer - progress will not be kept",
                  W / 2, 488, "bold 15px 'Trebuchet MS', sans-serif", "#FF9F5A", "center", 3);
+  } else if (saveLoadedFrom === "backup") {
+    outlinedText("Restored your progress from the backup copy",
+                 W / 2, 488, "bold 15px 'Trebuchet MS', sans-serif", "#50FA7B", "center", 3);
   }
 
   if (save.name) {
@@ -4303,7 +4363,10 @@ function update(dt) {
     score += scrollSpeed * 0.1 * stageDef().mult;   // distance component
     stats.runMeters = Math.floor(distance / 10);
     scrollSpeed = targetSpeed();
-    flushPersist(false);
+    // Heartbeat: even if some mutation path forgot to persist, at most one
+    // second of change is ever at risk. persist() itself skips unchanged
+    // bodies, so this costs nothing when there is nothing new.
+    if (performance.now() - lastPersistAt > 1000) persist();
     updateLevel();
     updateBanners();
     updateBiome();
