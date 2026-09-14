@@ -393,7 +393,10 @@ let airFrames;        // how long the player has been off the ground
  * buffer that press is simply swallowed and the game feels unresponsive.
  */
 function pressJump() {
-  if (gameOver) { restart(); return; }
+  // Tap-to-restart is kept - a fast restart loop is what makes a runner
+  // replayable - but not while the lockout is swallowing the taps that were
+  // already in flight when the run ended.
+  if (gameOver) { if (resumeLock <= 0) restart(); return; }
   started = true;
   jumpHeld = true;
   jumpBuffer = BUFFER_FRAMES;
@@ -464,7 +467,12 @@ function tryJump() {
 /* --- Keyboard ------------------------------------------------------------ */
 
 window.addEventListener("keydown", e => {
-  if (e.code === "Escape" && uiScreen !== "play") { closeMenu(); return; }
+  if (e.code === "Escape") {
+    if (uiScreen === "shop" || uiScreen === "board") { closeMenu(); return; }
+    if (uiScreen === "paused") { closePause(); return; }
+    openPause();
+    return;
+  }
   // Bail BEFORE preventDefault: W and SPACE are jump keys but also ordinary
   // characters, and swallowing them here made them untypable in the name box.
   if (nameModalOpen || uiScreen !== "play") return;
@@ -472,7 +480,9 @@ window.addEventListener("keydown", e => {
     e.preventDefault();
     unlockAudio();
     if (e.repeat) return;
-    if (lifePause) { resumeFromLifePause(); return; }   // resume, do not jump
+    // A held key at the moment of death would otherwise resume the instant it
+    // is released and pressed again; the lockout inside covers that too.
+    if (lifePause) { resumeFromLifePause(); return; }
     pressJump();
   }
 });
@@ -988,6 +998,21 @@ function maybeAddDecoy(prev, plat) {
    continues for at least STUN_RUNWAY beyond it - the distance the stumble can
    carry you at top speed, plus margin. You always have ground to recover on.
    ------------------------------------------------------------------------ */
+
+/* --- Accidental-resume lockout ---------------------------------------------
+   A runner is played by tapping constantly, so at the moment the world stops
+   there are already taps in flight. They used to arrive on the very next frame
+   and dismiss the screen before it could be read - which made the LIFE LOST
+   pause useless, and could skip the game-over screen entirely.
+
+   Two layers fix it. This lockout swallows anything that arrives in the first
+   ~0.45s, and the LIFE LOST screen additionally accepts ONLY its CONTINUE
+   button rather than a tap anywhere. The game-over screen keeps tap-to-restart
+   once the lockout passes, because there the fast restart loop is the point -
+   it is a restart screen, where LIFE LOST is a decision screen.
+   -------------------------------------------------------------------------- */
+const RESUME_LOCK = 27;
+let resumeLock = 0;
 
 const STUN_FRAMES = 22;
 const STUN_RUNWAY = STUN_FRAMES * MAX_SPEED + 40;   // 260px of guaranteed floor
@@ -2981,11 +3006,13 @@ function spendLife(cause) {
      mid-run, which the merchant balloon exists to avoid. */
   lifePause = true;
   lifePauseCause = cause;
+  resumeLock = RESUME_LOCK;
   releaseJump();
   return true;
 }
 
 function resumeFromLifePause() {
+  if (resumeLock > 0) return;        // still swallowing in-flight input
   lifePause = false;
   jumpBuffer = 0;                // the resuming tap must not also be a jump
   invuln = Math.max(invuln, REVIVE_INVULN);   // full mercy window on resume
@@ -3017,6 +3044,7 @@ function die(cause) {
 
   lives = 0;
   gameOver = true;
+  resumeLock = RESUME_LOCK;
   player.isAlive = false;
   deathCause = cause;
   shake(18);
@@ -4016,17 +4044,44 @@ function routePress(clientX, clientY) {
       return true;
     }
   }
-  // On the LIFE LOST screen, a tap anywhere that is not a button resumes -
-  // and is consumed, so it can never double as the first jump of the revive.
-  if (lifePause && uiScreen === "play") { resumeFromLifePause(); return true; }
+  // On the LIFE LOST screen a stray tap does NOTHING. Only CONTINUE resumes,
+  // so the screen cannot be dismissed by the taps still arriving from the
+  // moment of death. The press is still consumed so it never becomes a jump.
+  if (lifePause && uiScreen === "play") return true;
   // Inside a menu, a tap that hits nothing does nothing - it must never fall
   // through and start a run behind the menu.
   return uiScreen !== "play";
 }
 
-function openShop()  { uiScreen = "shop";  playSfx("click"); }
-function openBoard() { uiScreen = "board"; playSfx("click"); }
-function closeMenu() { uiScreen = "play"; }
+// Where a menu was opened from, so closing it returns there rather than
+// dropping the player back into a running game they had deliberately paused.
+let menuFrom = "play";
+
+function openShop()  { menuFrom = uiScreen; uiScreen = "shop";  playSfx("click"); }
+function openBoard() { menuFrom = uiScreen; uiScreen = "board"; playSfx("click"); }
+function closeMenu() { uiScreen = menuFrom === "paused" ? "paused" : "play"; menuFrom = "play"; }
+
+/**
+ * Pause, from the button in the HUD or from Escape.
+ *
+ * It is a screen rather than a flag because update() already freezes the world
+ * for any uiScreen other than "play" - the pause costs no new stop condition,
+ * it reuses the one the shop and leaderboard already rely on.
+ */
+function openPause() {
+  if (!started || gameOver || lifePause || uiScreen !== "play") return;
+  uiScreen = "paused";
+  releaseJump();                 // never resume into a held jump
+  resumeLock = RESUME_LOCK;      // the same in-flight-tap guard
+  playSfx("click");
+}
+
+function closePause() {
+  if (resumeLock > 0) return;
+  uiScreen = "play";
+  jumpBuffer = 0;                // the resuming press must not become a jump
+  playSfx("click");
+}
 
 /* --- Shop ---------------------------------------------------------------- */
 
@@ -4339,17 +4394,28 @@ function drawUI() {
     ctx.restore();
   }
 
+  // --- Pause, in the top-right corner. The whole screen is the jump button,
+  //     so this sits as far from where a thumb rests as the layout allows,
+  //     and the stack below it was shifted down to give it the corner. ---
+  if (started && !gameOver && !lifePause && uiScreen === "play") {
+    uiBtn(W - 60, 8, 48, 38, "", openPause, { accent: "rgba(20,32,44,0.82)" });
+    // two bars, drawn rather than typed so it reads at any scale
+    ctx.fillStyle = "#FFFFFF";
+    ctx.fillRect(W - 46, 18, 6, 18);
+    ctx.fillRect(W - 34, 18, 6, 18);
+  }
+
   // --- Best + rank, top right ---
   if (save.bestScore > 0) {
-    outlinedText("BEST " + save.bestScore.toLocaleString(), W - 18, 40,
+    outlinedText("BEST " + save.bestScore.toLocaleString(), W - 18, 72,
                  "bold 22px 'Trebuchet MS', sans-serif", "#FFE066", "right");
   }
-  outlinedText("RANK " + save.rank, W - 18, 68,
+  outlinedText("RANK " + save.rank, W - 18, 98,
                "bold 20px 'Trebuchet MS', sans-serif", "#B9E6FF", "right");
 
   // --- Level, beside the distance. The difficulty curve made visible. ---
   const lv = levelOf();
-  outlinedText("LV " + lv, W - 18, 126,
+  outlinedText("LV " + lv, W - 18, 128,
                "bold 20px 'Trebuchet MS', sans-serif",
                lv >= 8 ? "#FF6B6B" : (lv >= 5 ? "#FFB86C" : "#7FD4E6"), "right", 3);
 
@@ -4427,16 +4493,76 @@ function drawLifeLost() {
   outlinedText("WALLET  " + save.wallet.toLocaleString() + "  (banked as you ran)",
                W / 2, 322, "bold 19px 'Trebuchet MS', sans-serif", C.coin, "center", 3.5);
 
-  uiBtn(W / 2 - 215, 360, 210, 54, "CONTINUE", resumeFromLifePause,
-        { accent: "#2B6E7F", border: "#7FD4E6", font: 22 });
+  // Locked for a beat, and SEEN to be locked - a button that silently ignores
+  // you reads as broken, where one that greys out reads as deliberate.
+  const locked = resumeLock > 0;
+  uiBtn(W / 2 - 215, 360, 210, 54, locked ? "WAIT" : "CONTINUE",
+        resumeFromLifePause,
+        { accent: "#2B6E7F", border: "#7FD4E6", font: 22, disabled: locked });
   uiBtn(W / 2 + 5, 360, 210, 54, "SHOP", openShop,
         { accent: "#2F6B3A", border: "#50FA7B", font: 22 });
 
-  const pulse = 0.7 + Math.sin(elapsed * 5) * 0.3;
-  ctx.globalAlpha = pulse;
-  outlinedText(isTouch() ? "or tap anywhere to continue" : "or press SPACE to continue",
-               W / 2, 446, "bold 17px 'Trebuchet MS', sans-serif", "#9FB6C9", "center", 3);
-  ctx.globalAlpha = 1;
+  if (!locked) {
+    const pulse = 0.7 + Math.sin(elapsed * 5) * 0.3;
+    ctx.globalAlpha = pulse;
+    outlinedText(isTouch() ? "press CONTINUE when you are ready"
+                           : "press CONTINUE, or SPACE",
+                 W / 2, 446, "bold 17px 'Trebuchet MS', sans-serif", "#9FB6C9", "center", 3);
+    ctx.globalAlpha = 1;
+  }
+}
+
+/**
+ * The PAUSED screen. Deliberately not a death screen: it carries no penalty
+ * and no drama, just the run so far and the things worth doing while stopped.
+ */
+function drawPaused() {
+  ctx.fillStyle = "rgba(9,17,26,0.78)";
+  ctx.fillRect(0, 0, W, H);
+
+  outlinedText("PAUSED", W / 2, 132,
+               "bold 50px 'Trebuchet MS', sans-serif", "#7FD4E6", "center");
+
+  outlinedText(Math.floor(score).toLocaleString(), W / 2, 196,
+               "bold 40px 'Trebuchet MS', sans-serif", "#FFFFFF", "center");
+  outlinedText("SCORE SO FAR", W / 2, 220,
+               "bold 15px 'Trebuchet MS', sans-serif", "#9FB6C9", "center", 3);
+
+  outlinedText(Math.floor(distance / 10) + "m", W / 2 - 150, 264,
+               "bold 26px 'Trebuchet MS', sans-serif", "#E8F6FF", "center");
+  outlinedText("DISTANCE", W / 2 - 150, 286,
+               "bold 14px 'Trebuchet MS', sans-serif", "#9FB6C9", "center", 3);
+  outlinedText("LV " + levelOf(), W / 2, 264,
+               "bold 26px 'Trebuchet MS', sans-serif", "#FFB86C", "center");
+  outlinedText(levelDef().name, W / 2, 286,
+               "bold 14px 'Trebuchet MS', sans-serif", "#9FB6C9", "center", 3);
+  outlinedText(String(lives), W / 2 + 150, 264,
+               "bold 26px 'Trebuchet MS', sans-serif", "#FF6B6B", "center");
+  outlinedText("LIVES LEFT", W / 2 + 150, 286,
+               "bold 14px 'Trebuchet MS', sans-serif", "#9FB6C9", "center", 3);
+
+  outlinedText("WALLET  " + save.wallet.toLocaleString(), W / 2, 330,
+               "bold 19px 'Trebuchet MS', sans-serif", C.coin, "center", 3.5);
+
+  const locked = resumeLock > 0;
+  uiBtn(W / 2 - 215, 360, 210, 54, locked ? "WAIT" : "RESUME", closePause,
+        { accent: "#2B6E7F", border: "#7FD4E6", font: 22, disabled: locked });
+  uiBtn(W / 2 + 5, 360, 210, 54, "SHOP", openShop,
+        { accent: "#2F6B3A", border: "#50FA7B", font: 22 });
+  uiBtn(W / 2 - 215, 426, 210, 46, "LEADERBOARD", openBoard,
+        { accent: "#2B4E7F", border: "#7FB4E6", font: 18 });
+  // Ending here banks the run properly rather than leaving the player to die
+  // on purpose to get their score onto the board.
+  uiBtn(W / 2 + 5, 426, 210, 46, "END RUN", () => {
+    uiScreen = "play"; menuFrom = "play";
+    lives = 1;
+    die(lifePauseCause || "fall");
+  }, { accent: "#6B2F2F", border: "#FF6B6B", font: 18 });
+
+  if (!locked) {
+    outlinedText(isTouch() ? "tap RESUME to carry on" : "press RESUME, or Escape",
+                 W / 2, 506, "bold 16px 'Trebuchet MS', sans-serif", "#9FB6C9", "center", 3);
+  }
 }
 
 function drawFocusMission() {
@@ -4636,6 +4762,12 @@ function drawGameOver(meters) {
 function update(dt) {
   updateRunAnimation(dt);
 
+  // FIRST, above every early return below. The lockout exists precisely for
+  // the frames when the world is stopped - a menu, the LIFE LOST screen, the
+  // pause screen - so counting it anywhere after those returns would freeze it
+  // at full and the screens could never be dismissed at all.
+  if (resumeLock > 0) resumeLock--;
+
   // A menu pauses the run rather than letting it play on unseen behind the
   // overlay - coming back to a corpse after buying a hat would be absurd.
   if (uiScreen !== "play" || nameModalOpen) return;
@@ -4778,8 +4910,9 @@ function render() {
 
   drawUI();
 
-  if (uiScreen === "shop")  drawShop();
-  if (uiScreen === "board") drawBoard();
+  if (uiScreen === "paused") drawPaused();
+  if (uiScreen === "shop")   drawShop();
+  if (uiScreen === "board")  drawBoard();
 }
 
 function loop(timestamp) {
@@ -4835,6 +4968,10 @@ function restart() {
   beatBest = false;
   lives = START_LIVES; reviveFlash = 0; lastLifeWarned = false;
   lifePause = false; lifePauseCause = null;
+  // A new run always begins on the play screen. Without this a paused or
+  // menu screen survives the restart and the next run starts underneath an
+  // overlay it has no way to dismiss.
+  uiScreen = "play"; menuFrom = "play"; resumeLock = 0;
   wires = []; stunTimer = 0;
   springs = []; springArc = false;
   portals = [];

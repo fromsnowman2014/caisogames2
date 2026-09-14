@@ -933,16 +933,21 @@ console.log('\nLife-lost pause:');
     update(16); update(16);
     o.theWorldHoldsWhileFrozen = distance === d0;
 
-    const ev = new KeyboardEvent('keydown', { code: 'Space', key: ' ', bubbles: true, cancelable: true });
-    window.dispatchEvent(ev);
-    o.spaceResumesWithoutJumping = lifePause === false && jumpBuffer === 0;
+    // The screen is now guarded against the taps still in flight from the
+    // moment of death: nothing is accepted for RESUME_LOCK frames, and after
+    // that only CONTINUE - never a stray tap.
+    const space = () => window.dispatchEvent(new KeyboardEvent('keydown',
+      { code: 'Space', key: ' ', bubbles: true, cancelable: true }));
+    space();
+    o.spaceIsSwallowedDuringTheLockout = lifePause === true;
+    o.aStrayTapNeverResumes = routePress(-9999, -9999) === true && lifePause === true;
+    for (let i = 0; i < RESUME_LOCK + 2; i++) update(16);
+    o.aStrayTapStillNeverResumes = routePress(-9999, -9999) === true && lifePause === true;
+    space();
+    o.spaceResumesOnceUnlocked = lifePause === false && jumpBuffer === 0;
     o.resumeGrantsMercy = invuln >= REVIVE_INVULN;
     update(16);
     o.theWorldMovesAgainAtOnce = distance > d0;       // no deferred hit-stop
-
-    restart(); started = true;
-    player.y = H + 200; checkCollisions();
-    o.aTapAnywhereResumes = routePress(-9999, -9999) === true && lifePause === false;
 
     restart(); started = true;
     player.y = H + 200; checkCollisions();
@@ -1146,6 +1151,86 @@ console.log('\nPortals:');
     player.y = GROUND_Y - PLAYER_H; player.grounded = true; checkCollisions(); recycleWorld();
     o.aSkippedCoreIsReofferedNotLost = cores.length === 1 && cores[0].x > PLAYER_X;
     restart(); return o;
+  });
+  for (const [k, v] of Object.entries(e)) ok(v === true, k);
+  await browser.close();
+}
+
+// 24. The accidental-resume guard, and the pause button.
+console.log('\nAccidental-resume guard:');
+{
+  const { browser, page } = await open(webkit, TARGETS[0].ctx);
+  const e = await page.evaluate(() => {
+    const o = {};
+    // A runner is played by tapping constantly, so at the moment of death
+    // there are taps already in flight. They must not dismiss the screen.
+    restart(); started = true;
+    player.y = H + 200; checkCollisions();
+    o.lifeLostArmsTheLockout = lifePause && resumeLock > 0;
+    o.theContinueButtonRefusesWhileLocked = (resumeFromLifePause(), lifePause === true);
+    for (let i = 0; i < RESUME_LOCK + 2; i++) update(16);
+    o.itIsStillPausedAfterTheLockout = lifePause === true;
+    resumeFromLifePause();
+    o.continueWorksOnceUnlocked = lifePause === false;
+
+    // Game over keeps tap-to-restart - the fast restart loop is the point -
+    // but not during the lockout.
+    restart(); started = true; lives = 1;
+    player.y = H + 200; checkCollisions();
+    o.gameOverArmsTheLockout = gameOver && resumeLock > 0;
+    pressJump();
+    o.anInFlightTapDoesNotRestart = gameOver === true;
+    for (let i = 0; i < RESUME_LOCK + 2; i++) update(16);
+    pressJump();
+    o.tapRestartsOnceUnlocked = gameOver === false;
+    restart(); return o;
+  });
+  for (const [k, v] of Object.entries(e)) ok(v === true, k);
+  await browser.close();
+}
+
+console.log('\nPause:');
+{
+  const { browser, page } = await open(webkit, TARGETS[0].ctx);
+  const e = await page.evaluate(() => {
+    const o = {};
+    restart(); started = true; distance = 5000;
+    openPause();
+    o.pauseOpensAndReleasesAHeldJump = uiScreen === 'paused' && jumpHeld === false;
+    const d0 = distance;
+    update(16); update(16);
+    o.theWorldFreezesWhilePaused = distance === d0;
+    closePause();
+    o.resumeRefusesWhileLocked = uiScreen === 'paused';
+    for (let i = 0; i < RESUME_LOCK + 2; i++) update(16);
+    closePause();
+    o.resumeWorksOnceUnlocked = uiScreen === 'play' && jumpBuffer === 0;
+    update(16);
+    o.theWorldMovesAgain = distance > d0;
+
+    // A menu opened from the pause returns to the pause, not into a run the
+    // player had deliberately stopped.
+    openPause(); for (let i = 0; i < RESUME_LOCK + 2; i++) update(16);
+    openShop(); closeMenu();
+    o.aMenuFromPauseReturnsToPause = uiScreen === 'paused';
+    uiScreen = 'play'; menuFrom = 'play';
+    openShop(); closeMenu();
+    o.aMenuFromPlayStillReturnsToPlay = uiScreen === 'play';
+
+    // Pause is refused where there is nothing to pause.
+    restart(); o.cannotPauseBeforeTheRunStarts = (openPause(), uiScreen === 'play');
+    restart(); started = true; lives = 1; player.y = H + 200; checkCollisions();
+    o.cannotPauseOnGameOver = (openPause(), uiScreen === 'play');
+    restart(); started = true; player.y = H + 200; checkCollisions();
+    o.cannotPauseOnTheLifeLostScreen = (openPause(), uiScreen === 'play');
+
+    // The button lives in the HUD only while a run is actually going.
+    restart(); started = true; render();
+    const at = (x, y) => uiButtons.some(bt => x >= bt.x && x <= bt.x + bt.w && y >= bt.y && y <= bt.y + bt.h);
+    o.theButtonIsInTheTopRightCorner = at(W - 36, 27);
+    restart(); render();
+    o.noButtonBeforeTheRunStarts = !at(W - 36, 27);
+    return o;
   });
   for (const [k, v] of Object.entries(e)) ok(v === true, k);
   await browser.close();

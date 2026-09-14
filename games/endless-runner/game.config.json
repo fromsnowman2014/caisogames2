@@ -1,7 +1,7 @@
 {
   "id": "endless-runner",
   "name": "Turbo Dash",
-  "version": "8.0.0",
+  "version": "8.1.0",
   "description": "A colorful endless runner platformer across ten named difficulty levels. Jump tripwires, ride springs, read portals, dodge crumbling and fake platforms, evolve mid-run, spend coins at a merchant balloon, keep a pet, and chase a live shared leaderboard.",
   "author": "CaisoGames AI Team",
   "genre": "Endless Runner Platformer",
@@ -19,11 +19,12 @@
     "keyboard": {
       "space": "Jump (hold for a higher jump)",
       "up": "Jump (hold for a higher jump)",
-      "w": "Jump (hold for a higher jump)"
+      "w": "Jump (hold for a higher jump)",
+      "escape": "Pause / resume (also closes menus)"
     },
     "touch": {
       "enabled": true,
-      "description": "Tap anywhere to jump, hold for a higher jump. Landscape recommended."
+      "description": "Tap anywhere to jump, hold for a higher jump. Pause button in the top-right. Landscape recommended."
     }
   },
   "features": [
@@ -75,7 +76,11 @@
     "A wire is only placed where the platform runs on for the whole stun distance at top speed, so a stumble can never end at a pit",
     "Springs (level 4+): a high, slow arc under halved gravity - long enough to see the landing and steer with an air jump",
     "Portals (level 7+): both rings drawn so the exit is readable first; a warp pays +150 but skips the loot between and spends your air jumps",
-    "Skipped portal distance is never credited to distance, level, biome or speed"
+    "Skipped portal distance is never credited to distance, level, biome or speed",
+    "A 0.45s input lockout when the run stops, so the taps already in flight at the moment of death cannot dismiss the screen",
+    "LIFE LOST accepts only its CONTINUE button - never a stray tap - and shows WAIT while locked",
+    "A pause button in the top-right corner, with a PAUSED screen offering RESUME, SHOP, LEADERBOARD and END RUN",
+    "Escape toggles pause; a menu opened from the pause returns to the pause rather than into a running game"
   ],
   "stats": {
     "playtime": "1-5 minutes per run",
@@ -119,7 +124,9 @@
       "HERO's short rechargeable burst and the Super Suit's large one-shot budget stay distinct, so buying the suit still buys something",
       "The stumble is the only non-lethal hazard, so it is the first one taught",
       "A spring's slowness is its fairness: the arc is long enough to react to",
-      "A portal shows its exit before you commit, and costs air jumps and loot, so it is a decision rather than a gift"
+      "A portal shows its exit before you commit, and costs air jumps and loot, so it is a decision rather than a gift",
+      "The stop screens are guarded against in-flight input, because a runner is played by tapping constantly",
+      "LIFE LOST is a decision screen so it needs a deliberate button; game over is a restart screen so tap-to-restart survives the lockout"
     ]
   },
   "difficulty": {
@@ -186,7 +193,7 @@
     ]
   },
   "createdAt": "2026-09-08",
-  "updatedAt": "2026-09-13",
+  "updatedAt": "2026-09-14",
   "status": "playable",
   "technicalDetails": {
     "engine": "Custom HTML5 Canvas",
@@ -267,9 +274,13 @@
       "pagehide, beforeunload, blur, freeze and the 1s heartbeat each write",
       "tripwires stumble without costing a life, block jumping only for the stun, and always leave recovery runway",
       "springs fire only on a descending landing, arc high and slow under the ceiling, and yield to an air jump",
-      "portals resolve an exit above a real platform, pay the bonus without crediting distance, spend air jumps, and can be declined"
+      "portals resolve an exit above a real platform, pay the bonus without crediting distance, spend air jumps, and can be declined",
+      "in-flight taps cannot dismiss LIFE LOST or instantly restart after game over",
+      "only CONTINUE resumes from LIFE LOST; a stray tap never does, before or after the lockout",
+      "pause freezes the world, refuses where there is nothing to pause, and returns from menus to itself",
+      "a restart always begins on the play screen, never under a stale overlay"
     ],
-    "checks": 199
+    "checks": 220
   },
   "progression": {
     "type": "in-run evolution",
@@ -450,6 +461,13 @@
   "lifePause": {
     "when": "Every life lost except the last",
     "rationale": "Losing a life is the one moment a runner can pause without breaking flow - momentum is already zero. A mid-run menu would interrupt; a pause at death interrupts nothing. It gives the player a beat to register the loss and a natural point to shop.",
-    "resume": "Tap anywhere, SPACE, or CONTINUE. The resuming input is consumed so it cannot double as a jump; hit-stop is cleared so the world moves at once."
+    "resume": "Tap anywhere, SPACE, or CONTINUE. The resuming input is consumed so it cannot double as a jump; hit-stop is cleared so the world moves at once.",
+    "guard": "A 0.45s lockout swallows input that was already in flight, and only CONTINUE resumes. The button greys to WAIT while locked - a control that silently ignores you reads as broken."
+  },
+  "pause": {
+    "button": "Top-right corner of the HUD, live only during a run",
+    "screen": "Score so far, distance, level, lives and wallet, with RESUME / SHOP / LEADERBOARD / END RUN",
+    "rationale": "Implemented as a uiScreen rather than a new flag, because update() already freezes the world for any screen other than play - the pause reuses the stop condition the shop and leaderboard rely on.",
+    "endRun": "Banks the run properly, so a player who wants to stop is not made to die on purpose to post a score."
   }
 }
