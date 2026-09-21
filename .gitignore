@@ -53,3 +53,11 @@ test-results/
 # Temporary files
 *.tmp
 .temp/
+
+# Turbo Dash artifact builds - regenerated from src/index.html by
+# build-artifact.mjs on every publish. src/artifact-build.html is the
+# tracked reference copy; these two are disposable output.
+games/endless-runner/src/turbo-dash.html
+games/endless-runner/src/turbo-dash-cloud.html
+# A symlinked node_modules is not a directory, so the rule above misses it.
+games/endless-runner/test/node_modules
