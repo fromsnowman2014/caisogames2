@@ -1342,12 +1342,11 @@ function decoratePlatform(plat, wantsSpike, wantsWire) {
     }
   }
 
-  // --- Merchant balloon: high enough to demand a real jump. ---
-  if (plat.width > 170 && Math.random() < merchantChance()) {
+  // --- Coin balloon: high enough to demand a real jump. ---
+  if (plat.width > 170 && Math.random() < balloonChance()) {
     const mx = plat.x + plat.width * rand(0.35, 0.65);
     if (spikeX === null || Math.abs(mx - spikeX) > 80) {
-      powerups.push({ x: mx, y: plat.y - 104, type: "merchant",
-                      goods: rollMerchantGoods(),
+      powerups.push({ x: mx, y: plat.y - 104, type: "balloon",
                       taken: false, bob: Math.random() * Math.PI * 2 });
     }
   }
@@ -1595,8 +1594,10 @@ let powerups;                // pickups currently in the world
 let power;                   // { magnet, shield, wings } frames remaining
 
 function powerChance() {
-  // Rare enough to feel like a treat, common enough to shape a run.
-  return distance < 6000 ? 0.05 : 0.11;
+  // Rare enough to feel like a treat, common enough to shape a run. Nudged up
+  // when the merchant balloon stopped selling powers - this is now the only
+  // way shields, magnets and wings reach the player, so it carries that load.
+  return distance < 6000 ? 0.07 : 0.14;
 }
 
 function activatePower(type) {
@@ -1657,53 +1658,93 @@ function updatePowers() {
 
 
 /* ---------------------------------------------------------------------------
-   4b-2. THE MERCHANT
+   4b-2. THE COIN BALLOON
    ----------------------------------------------------------------------------
-   Coins were only spendable between runs, which meant a wallet full of coins
-   did nothing for the run you were actually playing.
+   This used to be a MERCHANT balloon: it sold a power-up for 60 coins taken
+   out of the wallet. It was wrong, and a player report is what proved it.
 
-   The obvious fix - open the shop mid-run - is the wrong one. A runner lives
-   on uninterrupted momentum, and a menu in the middle of it kills the tension
-   the whole game is built to create. On a phone it is worse still: the player
-   is holding the screen to jump, so a menu appears under a finger that is
-   already pressing something.
+   The wallet has two jobs at once. It is the long-term savings a player is
+   building toward something in the shop, AND it was the in-run currency the
+   merchant spent. Those two jobs fight each other. A player who met two
+   balloons in a good run finished it having EARNED 78 coins and having 42
+   FEWER coins than they started with - and the end screen, which only ever
+   reported earnings, cheerfully announced "+78 this run" over a wallet of 8.
+   Nothing was lost and nothing was broken; the game just quietly spent the
+   savings and never said so. That reads exactly like a bug, and for the
+   audience this game is actually for - children, who play to watch a number
+   go UP - a mechanic that eats the number is worse than no mechanic at all.
 
-   So the merchant is a BALLOON on the track instead. It shows exactly what it
-   sells and what it costs, it floats high enough to need a deliberate jump,
-   and buying it is simply reaching it. One decision, taken at full speed, with
-   no pause and no menu: do I spend the coins and take the detour, or stay on
-   the safe line?
+   So the balloon now GIVES instead of takes. Pop it and it bursts into coins.
+
+   What is kept is the part that was always good: it floats high, off the safe
+   line, so reaching it is a deliberate jump with a landing to think about.
+   The decision survives - do I take the detour? - but the stake is now risk,
+   which is free and exciting, instead of savings, which are precious and
+   accumulate slowly. That is the same trade every good runner makes.
+
+   What is NOT kept: the balloon no longer sells powers. It never needed to -
+   shields, magnets and wings already fall free out of the world (powerChance),
+   and hearts have their own pickup that scales with how much trouble you are
+   in. The merchant was a second, worse door to things that already had one.
+   With the merchant gone, powerChance is nudged up to cover its share.
+
+   THE BALANCE RULE, unchanged from the Crown and the Pup: balloon coins pay
+   the WALLET and never the SCORE. A player cannot inflate a leaderboard
+   position by popping balloons, and the items that really change a run are
+   gated behind a distance RECORD (needBest) as well as a price - so making
+   coins flow faster speeds up the shop without weakening the one thing the
+   economy exists to protect.
    ------------------------------------------------------------------------ */
 
-const MERCHANT_PRICE = 60;
+const BALLOON_COINS = 60;    // the number on the balloon, and the number paid
 
-function merchantChance() {
-  // Only worth offering once the player has coins to spend.
-  if (save.wallet < MERCHANT_PRICE) return 0;
-  return distance < 4000 ? 0.04 : 0.08;
+function balloonChance() {
+  // No wallet requirement any more. The merchant demanded 60 coins before it
+  // would even appear, which meant the players who most needed coins - new
+  // ones - were the only players who never saw it.
+  return distance < 2500 ? 0.05 : 0.09;
 }
 
-/** Decide what this particular balloon is selling, and show it up front. */
-function rollMerchantGoods() {
-  // A player who is losing gets offered what they actually need. Blind
-  // gambling would be cheaper to build but worse to play - you cannot make a
-  // real decision about a mystery box.
-  if (lives < MAX_LIVES && Math.random() < 0.38) return "heart";
-  const pool = ["shield", "magnet", "wings"];
-  return pool[randInt(0, pool.length - 1)];
-}
+/**
+ * Pop a coin balloon: pay the wallet, and make it LOOK like sixty coins.
+ * The payout is banked immediately, like every other coin, so it survives a
+ * run that is abandoned rather than finished.
+ */
+function popBalloon(pu) {
+  // The Crown's +25% applies here too - it is a coin bonus, and this is coins.
+  const pay = equipped("hat").id === "crown"
+            ? Math.round(BALLOON_COINS * 1.25) : BALLOON_COINS;
 
-function buyFromMerchant(pu) {
-  if (save.wallet < MERCHANT_PRICE) {
-    addPopup("NEED " + (MERCHANT_PRICE - save.wallet) + " MORE", "#FF9F5A");
-    playSfx("deny");
-    return false;
-  }
-  save.wallet -= MERCHANT_PRICE;
+  save.wallet += pay;
+  runBanked += pay;
+  balloonCoins += pay;
+  balloonsPopped++;
   persist();
-  activatePower(pu.goods);
-  addPopup("-" + MERCHANT_PRICE + " COINS", "#FFE066");
-  return true;
+
+  // Counted apart from stats.runCoins on purpose: the COINS number on the end
+  // screen means "coins you caught", and the missions that ask for ten coins
+  // in a run should not be finished by one lucky balloon.
+  addPopup("+" + pay + " COINS!", "#FFE066");
+  spawnCoinBurst(pu.x, pu.y);
+  playSfx("coin");
+  shake(6);
+}
+
+let balloonCoins = 0;      // wallet coins this run's balloons paid
+let balloonsPopped = 0;    // how many, for the end-screen breakdown
+
+/** A shower of gold, big enough that sixty coins feels like sixty coins. */
+function spawnCoinBurst(x, y) {
+  for (let i = 0; i < 34; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = rand(2, 7);
+    particles.push({
+      x, y,
+      vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 2.5,
+      life: randInt(24, 52), size: rand(2.5, 6),
+      color: Math.random() < 0.72 ? "#FFD700" : "#FFF3B0"
+    });
+  }
 }
 
 
@@ -2012,6 +2053,12 @@ function lockReason(slot, item) {
 function buyItem(slot, item) {
   if (hasItem(slot, item.id) || lockReason(slot, item)) return false;
   save.wallet -= item.price;
+  // The shop can be opened mid-run, from the pause screen or the LIFE LOST
+  // screen, so a purchase is the one remaining thing that can take coins out
+  // of the wallet between a run's start and its end screen. It is recorded so
+  // the end screen can show it, rather than reporting earnings alone and
+  // leaving the player to wonder where the difference went.
+  runSpent += item.price;
   save.owned.push(slot + ":" + item.id);
   save.equip[slot] = item.id;
   persist();
@@ -2368,6 +2415,10 @@ function finishRun() {
   if (leftover > 0) { save.wallet += leftover; runBanked += leftover; }
   walletCarry = 0;
   runWalletGain = runBanked;
+  // Snapshotted here, not read live: the shop is reachable from the game-over
+  // screen too, and a purchase made AFTER the run ended is not part of the
+  // run's ledger.
+  runWalletSpent = runSpent;
   newRecord = false;
   if (Math.floor(score) > save.bestScore) { save.bestScore = Math.floor(score); newRecord = true; }
   if (meters > save.best) save.best = meters;
@@ -2387,7 +2438,9 @@ function finishRun() {
 
 let newRecord = false;
 let runWalletGain = 0;   // coins banked by the last finished run
+let runWalletSpent = 0;  // coins the last finished run spent in the shop
 let runBanked = 0;       // coins this run has put in the wallet so far
+let runSpent = 0;        // coins this run has taken out (shop purchases only)
 let walletCarry = 0;     // fractional Crown bonus waiting to become a whole coin
 let beatBest = false;   // has this run already passed the stored best?
 
@@ -2816,11 +2869,9 @@ function checkCollisions() {
     if (pu.taken) continue;
     const dx = cx - pu.x, dy = cy - pu.y;
     if (dx * dx + dy * dy < 36 * 36) {
-      if (pu.type === "merchant") {
-        // A purchase the player cannot afford leaves the balloon in place -
-        // taking their coins for nothing, or silently eating the pickup,
-        // would both feel like a bug.
-        if (buyFromMerchant(pu)) pu.taken = true;
+      if (pu.type === "balloon") {
+        pu.taken = true;
+        popBalloon(pu);
         continue;
       }
       pu.taken = true;
@@ -3028,8 +3079,8 @@ function spendLife(cause) {
 
      Losing a life is the one moment a runner can pause without breaking
      anything, because momentum is already at zero. So the world holds here
-     until a tap, and the shop is offered from this screen - unlike a menu
-     mid-run, which the merchant balloon exists to avoid. */
+     until a tap, and the shop is offered from this screen - rather than from
+     a menu opened mid-run, under a finger that is already holding to jump. */
   lifePause = true;
   lifePauseCause = cause;
   resumeLock = RESUME_LOCK;
@@ -3737,60 +3788,51 @@ function drawPowerups() {
     ctx.lineWidth = 2;
     ctx.strokeStyle = "#000";
 
-    if (pu.type === "merchant") {
-      // A balloon carrying a basket. What it sells and what it costs are both
-      // drawn on it, because a decision made at speed has to be readable in a
-      // single glance.
-      const affordable = save.wallet >= MERCHANT_PRICE;
-      ctx.globalAlpha = affordable ? 1 : 0.55;
-
-      ctx.fillStyle = affordable ? "#FF6B9D" : "#7C8B99";
-      ctx.beginPath();
-      ctx.ellipse(0, -12, 20, 24, 0, 0, Math.PI * 2);
-      ctx.fill(); ctx.stroke();
-      ctx.fillStyle = "rgba(255,255,255,0.35)";
-      ctx.beginPath(); ctx.ellipse(-7, -20, 5, 8, -0.4, 0, Math.PI * 2); ctx.fill();
-
-      ctx.strokeStyle = "#3A2A20"; ctx.lineWidth = 1.6;
-      ctx.beginPath(); ctx.moveTo(-7, 10); ctx.lineTo(-5, 18);
-      ctx.moveTo(7, 10); ctx.lineTo(5, 18); ctx.stroke();
-      ctx.fillStyle = "#8B5A2B"; ctx.strokeStyle = "#4A2E14"; ctx.lineWidth = 2;
-      ctx.fillRect(-9, 18, 18, 11); ctx.strokeRect(-9, 18, 18, 11);
-
-      // the goods, drawn small inside the balloon
+    if (pu.type === "balloon") {
+      // A balloon stuffed with coins. Everything about it says GOLD, because
+      // the whole point of the rework is that a child should see this from
+      // across the screen and want it. It is never greyed out and it never
+      // shows a price - there is nothing to afford.
+      const pay = equipped("hat").id === "crown"
+                ? Math.round(BALLOON_COINS * 1.25) : BALLOON_COINS;
+      const pulse = 1 + Math.sin(pu.bob * 1.7) * 0.05;   // a slow, inviting breath
       ctx.save();
-      ctx.translate(0, -12); ctx.scale(0.52, 0.52);
-      if (pu.goods === "heart") {
-        ctx.fillStyle = "#FF4D6D"; ctx.strokeStyle = "#12202c"; ctx.lineWidth = 4;
-        ctx.beginPath();
-        ctx.moveTo(0, 12);
-        ctx.bezierCurveTo(-16, 0, -11, -13, 0, -5);
-        ctx.bezierCurveTo(11, -13, 16, 0, 0, 12);
-        ctx.closePath(); ctx.fill(); ctx.stroke();
-      } else if (pu.goods === "shield") {
-        ctx.fillStyle = "rgba(139,233,253,0.95)"; ctx.strokeStyle = "#12202c"; ctx.lineWidth = 4;
-        ctx.beginPath(); ctx.arc(0, 0, 13, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-      } else if (pu.goods === "magnet") {
-        ctx.fillStyle = "#FF5555"; ctx.strokeStyle = "#12202c"; ctx.lineWidth = 4;
-        ctx.beginPath(); ctx.arc(0, 2, 12, Math.PI, 0);
-        ctx.lineTo(12, 12); ctx.lineTo(5, 12); ctx.lineTo(5, 2);
-        ctx.arc(0, 2, 5, 0, Math.PI, true);
-        ctx.lineTo(-5, 12); ctx.lineTo(-12, 12);
-        ctx.closePath(); ctx.fill(); ctx.stroke();
-      } else {
-        ctx.fillStyle = "#BD93F9"; ctx.strokeStyle = "#12202c"; ctx.lineWidth = 4;
-        ctx.beginPath();
-        ctx.moveTo(0, -15);
-        ctx.quadraticCurveTo(11, -2, 3, 15);
-        ctx.quadraticCurveTo(-9, -1, 0, -15);
-        ctx.fill(); ctx.stroke();
-      }
+      ctx.scale(pulse, pulse);
+
+      // The envelope is deliberately a DEEPER amber than the coin it carries.
+      // Drawn in the same gold, the coin vanished into the balloon and the
+      // whole thing read as one yellow blob at running speed.
+      const skin = ctx.createLinearGradient(0, -36, 0, 12);
+      skin.addColorStop(0, "#F79A3C");
+      skin.addColorStop(0.55, "#E8761E");
+      skin.addColorStop(1, "#B8500F");
+      ctx.fillStyle = skin;
+      ctx.beginPath();
+      ctx.ellipse(0, -12, 21, 25, 0, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle = "rgba(255,255,255,0.4)";
+      ctx.beginPath(); ctx.ellipse(-8, -21, 5, 8, -0.4, 0, Math.PI * 2); ctx.fill();
+
+      // the knot and string down to a little coin sack
+      ctx.fillStyle = "#B8500F"; ctx.strokeStyle = "#000"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(-4, 11); ctx.lineTo(4, 11); ctx.lineTo(0, 16);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.strokeStyle = "#3A2A20"; ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.moveTo(0, 16); ctx.lineTo(0, 22); ctx.stroke();
+      ctx.fillStyle = "#C88A3A"; ctx.strokeStyle = "#4A2E14"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.ellipse(0, 28, 9, 7, 0, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+
+      // a fat coin on the balloon's face, so the reward is stated as an object
+      ctx.fillStyle = C.coin; ctx.strokeStyle = "#8B6508"; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.arc(0, -13, 11, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = C.coinShine;
+      ctx.beginPath(); ctx.arc(-2.5, -15.5, 4, 0, Math.PI * 2); ctx.fill();
       ctx.restore();
 
-      outlinedText(MERCHANT_PRICE + "c", 0, 44,
-                   "bold 17px 'Trebuchet MS', sans-serif",
-                   affordable ? "#FFE066" : "#FF9F5A", "center", 3);
-      ctx.globalAlpha = 1;
+      // ...and as a number, because "+60" is the thing being collected
+      outlinedText("+" + pay, 0, 50,
+                   "bold 19px 'Trebuchet MS', sans-serif", "#FFE066", "center", 3.5);
     } else if (pu.type === "heart") {
       ctx.fillStyle = "#FF4D6D";
       ctx.beginPath();
@@ -4724,6 +4766,16 @@ function drawGameOver(meters) {
   outlinedText(String(coinCount), W / 2, 232, "bold 30px 'Trebuchet MS', sans-serif", C.coin, "center");
   outlinedText("COINS", W / 2, 254, "bold 15px 'Trebuchet MS', sans-serif", "#9FB6C9", "center", 3);
 
+  // Balloons sit with the run's other statistics rather than down beside the
+  // wallet, where the line had to fight the restart prompt for room. They are
+  // a big share of a good run's income, so they are named, not folded in.
+  if (balloonsPopped > 0) {
+    outlinedText("+ " + balloonsPopped +
+                 (balloonsPopped === 1 ? " balloon" : " balloons") +
+                 "  (" + balloonCoins + ")",
+                 W / 2, 276, "bold 15px 'Trebuchet MS', sans-serif", "#FFE066", "center", 3);
+  }
+
   outlinedText("x" + stats.runBestMult, W / 2 + 130, 232, "bold 30px 'Trebuchet MS', sans-serif", "#FFD700", "center");
   outlinedText("BEST COMBO", W / 2 + 130, 254, "bold 15px 'Trebuchet MS', sans-serif", "#9FB6C9", "center", 3);
 
@@ -4742,14 +4794,26 @@ function drawGameOver(meters) {
     my += 30;
   }
 
-  if (!newRecord && save.bestScore > 0) {
+  // A blocked store takes this slot from the best-score reminder: a wallet
+  // that will not survive the next reload matters more than a reminder of a
+  // number the player just saw.
+  if (storageOk !== false && !newRecord && save.bestScore > 0) {
     outlinedText("Best " + save.bestScore.toLocaleString(), W / 2, 424,
                  "bold 20px 'Trebuchet MS', sans-serif", "#CCCCCC", "center");
   }
 
   // The wallet, stated as a TOTAL with the run's gain beside it. "+12 coins"
   // alone reads as though the previous runs' coins went somewhere.
-  const gainTxt = runWalletGain > 0 ? "  (+" + runWalletGain + " this run)" : "";
+  //
+  // This line is now a promise: nothing spends the wallet during a run any
+  // more, so the number in brackets is EXACTLY how much the wallet went up.
+  // It used to be earnings only, while the merchant balloon quietly took 60
+  // out of the back - which is how a player finished a run with "+78" written
+  // over a wallet that had fallen by 42. Guarded by a test, not by good
+  // intentions: walletBefore + runWalletGain must equal walletAfter.
+  let gainTxt = runWalletGain > 0 ? "  (+" + runWalletGain : "";
+  if (gainTxt && runWalletSpent > 0) gainTxt += ", -" + runWalletSpent + " spent";
+  if (gainTxt) gainTxt += " this run)";
   outlinedText("WALLET  " + save.wallet.toLocaleString() + gainTxt, W / 2, 452,
                "bold 21px 'Trebuchet MS', sans-serif", C.coin, "center", 3.5);
 
@@ -4759,6 +4823,14 @@ function drawGameOver(meters) {
     const need = nu.item.price - save.wallet;
     outlinedText(need.toLocaleString() + " more for " + nu.item.name,
                  W / 2, 474, "bold 16px 'Trebuchet MS', sans-serif", "#B9E6FF", "center", 3);
+  }
+
+  // If the store is blocked, say so HERE - this is the screen where the player
+  // reads their wallet, and a wallet that silently will not survive the next
+  // reload is the single most confusing thing this game can do to them.
+  if (storageOk === false) {
+    outlinedText("⚠ Coins cannot be saved in this viewer",
+                 W / 2, 424, "bold 16px 'Trebuchet MS', sans-serif", "#FF9F5A", "center", 3);
   }
 
   // Gently pulse the restart prompt so it's obviously interactive.
@@ -5016,7 +5088,8 @@ function restart() {
   if (equipped("rocket").id === "turbo" || equipped("rocket").id === "cape") stage = 1;
   flightMeter = FLIGHT_FRAMES; suitBurned = false; flying = false;
   cubUsed = false; petCoinBonus = 0; heroFuel = HERO_FLIGHT_MAX;
-  runBanked = 0; walletCarry = 0;
+  runBanked = 0; runSpent = 0; walletCarry = 0;
+  balloonCoins = 0; balloonsPopped = 0;
   petX = PLAYER_X - 46; petY = player.y - 26;
   // HALO starts the run holding a shield.
   power = { magnet: 0, shield: equipped("hat").id === "halo" ? 1 : 0, wings: 0 };

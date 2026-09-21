@@ -633,45 +633,170 @@ console.log('\nLevels and hazards:');
   await browser.close();
 }
 
-// 15. THE MERCHANT. Mid-run spending without a menu, because a menu would stop
-//     the run the whole game exists to keep moving.
-console.log('\nMerchant:');
+// 15. THE COIN BALLOON. It used to be a merchant that SOLD a power for 60
+//     coins out of the wallet, and that is precisely what made a real player
+//     finish a run with "+78 this run" printed over a wallet that had fallen
+//     by 42. It now pays 60 instead of taking 60. These checks pin the two
+//     things that must stay true: it never reduces the wallet, and it never
+//     touches the score.
+console.log('\nCoin balloon:');
 {
   const { browser, page } = await open(webkit, TARGETS[0].ctx);
   const e = await page.evaluate(() => {
     const o = {};
     const put = () => { powerups.length = 0;
       powerups.push({ x: PLAYER_X + PLAYER_W / 2, y: player.y + PLAYER_H / 2,
-                      type: 'merchant', goods: 'shield', taken: false, bob: 0 });
+                      type: 'balloon', taken: false, bob: 0 });
       return powerups[0]; };
 
-    restart(); save.wallet = 0;   o.noOfferWhileBroke = merchantChance() === 0;
-    save.wallet = 500;            o.offersOnceAffordable = merchantChance() > 0;
+    // Offered to everyone. The merchant demanded 60 coins before it would even
+    // appear, so the players who needed coins most never saw one.
+    restart(); save.wallet = 0;
+    o.offeredEvenWithAnEmptyWallet = balloonChance() > 0;
+    save.wallet = 5000;
+    o.stillOfferedWhenRich = balloonChance() > 0;
 
-    restart(); started = true; save.wallet = 200; power.shield = 0;
+    // Popping it PAYS. This is the whole point of the rework.
+    restart(); started = true; save.wallet = 200; save.equip.hat = 'none';
+    const s0 = score;
     let m = put(); checkCollisions();
-    o.buyingDeductsAndGrants = save.wallet === 200 - MERCHANT_PRICE &&
-                               power.shield === 1 && m.taken;
+    o.poppingPaysTheWallet = save.wallet === 200 + BALLOON_COINS && m.taken;
+    o.poppingNeverCostsCoins = save.wallet > 200;
+    // ...into the WALLET only. A balloon that paid score would let a patient
+    // player buy leaderboard position, which the economy exists to prevent.
+    o.poppingPaysNoScore = score === s0;
 
-    // Refused purchases must not quietly eat the coins OR the balloon.
-    restart(); started = true; save.wallet = 10; power.shield = 0;
-    m = put(); checkCollisions();
-    o.refusedPurchaseChangesNothing = save.wallet === 10 && power.shield === 0 && !m.taken;
+    // It counts toward the run's banked total, so the end screen's "+N this
+    // run" includes it and the number is not a lie in the other direction.
+    o.countsTowardTheRunTotal = runBanked >= BALLOON_COINS;
+    o.countedSeparatelyFromCaughtCoins = stats.runCoins === 0 && balloonsPopped === 1;
 
-    // The offer is decided up front so it can be shown before committing.
-    restart(); lives = MAX_LIVES;
-    let heartsAtFull = 0;
-    for (let i = 0; i < 300; i++) if (rollMerchantGoods() === 'heart') heartsAtFull++;
-    o.neverSellsHeartsAtFullLives = heartsAtFull === 0;
-    lives = 1;
-    let heartsWhenHurt = 0;
-    for (let i = 0; i < 300; i++) if (rollMerchantGoods() === 'heart') heartsWhenHurt++;
-    o.sellsHeartsWhenHurt = heartsWhenHurt > 30;
+    // The Crown is a coin bonus, so it applies here too.
+    restart(); started = true; save.owned.push('hat:crown'); save.equip.hat = 'crown';
+    save.wallet = 0; put(); checkCollisions();
+    o.crownBoostsBalloonsToo = save.wallet > BALLOON_COINS;
+    save.equip.hat = 'none';
+
+    // Banked on contact, not at the end of the run: an abandoned run keeps it.
+    restart(); started = true; save.wallet = 0; put(); checkCollisions();
+    o.bankedImmediatelyNotOnDeath = save.wallet === BALLOON_COINS && !gameOver;
+
+    // Nothing in the world sells anything any more.
+    o.nothingSellsPowersAnyMore =
+      typeof window.buyFromMerchant === 'undefined' &&
+      typeof window.MERCHANT_PRICE === 'undefined';
+
+    // Powers still reach the player - they simply fall free now.
+    restart(); distance = 0;      const early = powerChance();
+    distance = 9000;              const late = powerChance();
+    o.freePowerupsStillArrive = early > 0 && late > early;
+
     restart();
     return o;
   });
   for (const [k, v] of Object.entries(e)) ok(v === true, k);
   await browser.close();
+}
+
+// 15b. THE WALLET LEDGER. The reported bug was not lost coins - saving worked
+//      perfectly - it was an end screen that reported earnings while something
+//      else quietly spent the savings. The fix is an accounting invariant:
+//      walletBefore + gain - spent === walletAfter, always.
+console.log('\nWallet ledger is honest:');
+{
+  const { browser, page } = await open(webkit, TARGETS[0].ctx);
+  const e = await page.evaluate(() => {
+    const o = {};
+    const ledgerHolds = (setup, pre) => {
+      restart(); started = true; save.equip.hat = 'none';
+      if (pre) pre();                     // arrange the world BEFORE the baseline
+      const before = save.wallet;
+      setup();
+      lives = 1; die('fall');
+      return before + runWalletGain - runWalletSpent === save.wallet;
+    };
+
+    o.holdsForPlainCoins = ledgerHolds(() => {
+      for (let i = 0; i < 31; i++) collectCoin({ x: 0, y: 0, collected: false });
+    });
+
+    o.holdsWithBalloons = ledgerHolds(() => {
+      for (let i = 0; i < 12; i++) collectCoin({ x: 0, y: 0, collected: false });
+      for (let i = 0; i < 3; i++) popBalloon({ x: 0, y: 0 });
+    });
+
+    // The shop is reachable mid-run (pause screen, LIFE LOST screen), so a
+    // purchase is the one thing left that can take coins out during a run.
+    // It must be REPORTED, not hidden.
+    o.holdsWhenTheShopIsUsedMidRun = ledgerHolds(() => {
+      for (let i = 0; i < 20; i++) collectCoin({ x: 0, y: 0, collected: false });
+      buyItem('trail', SHOP.trail[1]);
+    }, () => { save.wallet = 3000; save.best = 9999; save.owned = []; });
+    o.midRunSpendingIsShown = runWalletSpent === 200;
+
+    // ...and a purchase made AFTER the run ended is not the run's business.
+    const shownBefore = runWalletSpent;
+    buyItem('trail', SHOP.trail[2]);
+    o.spendingAfterTheRunIsNotBackdated = runWalletSpent === shownBefore;
+
+    // Every counter starts clean, or a second run inherits the first's ledger.
+    restart();
+    o.countersResetBetweenRuns =
+      runBanked === 0 && runSpent === 0 && balloonCoins === 0 && balloonsPopped === 0;
+    return o;
+  });
+  for (const [k, v] of Object.entries(e)) ok(v === true, k);
+  await browser.close();
+}
+
+// 15c. COINS SURVIVE. The user asked outright whether saving works. It does,
+//      and this is what proves it: a reload, an abandoned run, and a store
+//      that refuses to work at all.
+console.log('\nCoins survive:');
+{
+  const { browser, page } = await open(webkit, TARGETS[0].ctx);
+
+  await page.evaluate(() => {
+    restart(); started = true; save.wallet = 0; persist();
+    for (let i = 0; i < 24; i++) collectCoin({ x: 0, y: 0, collected: false });
+    popBalloon({ x: 0, y: 0 });
+  });
+  const mid = await page.evaluate(() => save.wallet);
+  await page.reload();
+  await page.waitForTimeout(1500);
+  const afterReload = await page.evaluate(() => save.wallet);
+  ok(afterReload === mid, 'coins survive a reload', `${mid} -> ${afterReload}`);
+
+  // No death, no game-over screen, no clean ending at all - the app-switch case.
+  await page.evaluate(() => {
+    restart(); started = true;
+    for (let i = 0; i < 9; i++) collectCoin({ x: 0, y: 0, collected: false });
+  });
+  const mid2 = await page.evaluate(() => save.wallet);
+  await page.reload();
+  await page.waitForTimeout(1500);
+  const afterAbandon = await page.evaluate(() => save.wallet);
+  ok(afterAbandon === mid2, 'coins from an ABANDONED run survive', `${mid2} -> ${afterAbandon}`);
+  await browser.close();
+
+  // A store that throws on every access must be detected, not mistaken for a
+  // working one, and must be SAID so on the screen where the wallet is read.
+  const { browser: b2, page: p2 } = await open(webkit, TARGETS[0].ctx, {
+    init: () => {
+      Object.defineProperty(window, 'localStorage',
+        { configurable: true, get() { throw new Error('blocked'); } });
+    }
+  });
+  const blocked = await p2.evaluate(() => {
+    restart(); started = true;
+    for (let i = 0; i < 4; i++) collectCoin({ x: 0, y: 0, collected: false });
+    lives = 1; die('fall');
+    render();
+    return { storageOk, gameOver, wallet: save.wallet };
+  });
+  ok(blocked.storageOk === false, 'a blocked store is detected', JSON.stringify(blocked));
+  ok(blocked.gameOver === true, 'the game still plays with no store at all');
+  await b2.close();
 }
 
 // 16. PETS. The rule: a pet may ease the RUN or fatten the WALLET, never

@@ -1,8 +1,8 @@
 {
   "id": "endless-runner",
   "name": "Turbo Dash",
-  "version": "8.1.0",
-  "description": "A colorful endless runner platformer across ten named difficulty levels. Jump tripwires, ride springs, read portals, dodge crumbling and fake platforms, evolve mid-run, spend coins at a merchant balloon, keep a pet, and chase a live shared leaderboard.",
+  "version": "8.2.0",
+  "description": "A colorful endless runner platformer across ten named difficulty levels. Jump tripwires, ride springs, read portals, dodge crumbling and fake platforms, evolve mid-run, pop coin balloons, keep a pet, and chase a live shared leaderboard.",
   "author": "CaisoGames AI Team",
   "genre": "Endless Runner Platformer",
   "tags": [
@@ -59,7 +59,7 @@
     "Crumbling platforms (level 3+) that shake, crack and collapse 0.8s after you land",
     "Fake platforms (level 5+) placed as DECOYS in wide gaps, never on the route itself",
     "Fakes carry a visible tell (translucent and drifting) so reading them is a skill, not a memory test",
-    "Merchant balloon: mid-run spending as a single jump-and-touch, with no menu and no pause",
+    "Coin balloons: a high, off-line jump that pays 60 coins straight into the wallet",
     "Pets: Coin Pup (wallet-only coin gathering), Scout Bird (marks fakes), Spark Cub (spares one revive penalty)",
     "A single banner queue, so zone, level and evolution announcements never overwrite each other",
     "Fourth evolution HERO: 4 jumps plus a rechargeable flight burst, earned by completing all three missions in one run",
@@ -256,7 +256,9 @@
       "fakes never catch the player and reveal themselves on contact",
       "crumblers hold first, warn, then collapse and hold nothing",
       "the real route is traversable ignoring every fake platform",
-      "merchant buys deduct and grant; a refused purchase changes nothing",
+      "a coin balloon pays the wallet, never the score, and never costs coins",
+      "walletBefore + gain - spent equals walletAfter for every run, including mid-run shopping",
+      "coins survive a reload, an abandoned run, and a store that throws on every access",
       "pets never add to score, and the Cub spares one revive penalty per run",
       "zone, level and evolution banners queue instead of overlapping",
       "coins accumulate across runs and survive a reload",
@@ -280,7 +282,7 @@
       "pause freezes the world, refuses where there is nothing to pause, and returns from menus to itself",
       "a restart always begins on the play screen, never under a stale overlay"
     ],
-    "checks": 220
+    "checks": 235
   },
   "progression": {
     "type": "in-run evolution",
@@ -442,11 +444,23 @@
     "measuredInflation": "x1.78 average score vs a single life, against a naive expectation of x3",
     "hearts": "Rare pickups. Spawn chance is 0 at full health and rises to ~9% per platform on the last life."
   },
-  "merchant": {
-    "price": 60,
-    "form": "A balloon on the track, reached with a deliberate jump",
-    "rationale": "A mid-run menu would stop the run and, on a phone, appear under a finger already held down to jump. A priced pickup keeps the decision without breaking stride.",
-    "goods": "Shown on the balloon before you commit; hearts are only offered when lives are missing."
+  "coinBalloon": {
+    "pays": 60,
+    "costs": 0,
+    "form": "A balloon on the track, floating off the safe line, reached with a deliberate jump",
+    "wasPreviously": "A MERCHANT balloon that SOLD a power-up for 60 coins out of the wallet.",
+    "whyItChanged": "The wallet had two jobs at once - long-term savings for the shop, and the merchant's in-run currency - and they fought. A player who met two balloons in one run earned 78 coins and finished with 42 FEWER than they started with, while the end screen reported '+78 this run'. Nothing was lost and nothing was broken; the game spent the savings and never said so, which reads exactly like a bug. For children, who play to watch a number go up, a mechanic that eats the number is worse than no mechanic.",
+    "whatWasKept": "The decision. It still floats high and off the line, so reaching it is a real jump with a landing to think about - but the stake is risk, which is free, instead of savings, which accumulate slowly.",
+    "whatWasDropped": "Selling powers. Shields, magnets and wings already fall free from the world and hearts have their own pickup that scales with trouble, so the merchant was a second, worse door to things that already had one. powerChance rose from 0.05/0.11 to 0.07/0.14 to carry its share.",
+    "balanceRule": "Balloon coins pay the WALLET and never the SCORE, exactly like the Crown and the Pup. The Crown's +25% applies. Counted apart from stats.runCoins so a lucky balloon cannot finish a 'collect ten coins' mission.",
+    "whyFasterCoinsAreSafe": "Leaderboard position is protected by needBest - a distance RECORD - not by price. Price gates patience; records gate skill. Making coins flow faster speeds up the shop without weakening the thing the economy exists to protect.",
+    "measuredIncome": "Per run, assuming every coin is caught: 1000m ~118, 3000m ~286, 6000m ~648. At the ~40% catch rate a real 6000m run showed, that is roughly 4x the old income - and the old figure was before the merchant took 60 per balloon back out."
+  },
+  "walletLedger": {
+    "invariant": "walletBefore + runWalletGain - runWalletSpent === walletAfter, asserted at finishRun",
+    "display": "WALLET <total>  (+<gained>, -<spent> spent this run), with the balloon count shown beside the run's other statistics",
+    "whySpendingIsTracked": "The shop is reachable mid-run from the pause and LIFE LOST screens, so a purchase is the one thing left that can take coins out during a run. It is reported rather than hidden - reporting earnings alone is what produced the original confusion.",
+    "blockedStorage": "When a write cannot be read back, the game-over screen says so where the wallet is read, taking that slot from the best-score reminder."
   },
   "economy": {
     "walletCarriesBetweenRuns": true,
