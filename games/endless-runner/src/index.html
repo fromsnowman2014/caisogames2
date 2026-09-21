@@ -421,6 +421,7 @@ function pressJump() {
 function releaseJump() {
   jumpHeld = false;
   holdFrames = 0; // cutting the key short cuts the jump short
+  if (web && web.active) releaseWeb(false);   // letting go IS the control
 }
 
 /**
@@ -436,9 +437,16 @@ function tryJump() {
   if (jumpBuffer <= 0) return;
   if (stunTimer > 0) return;                  // stumbling: no jump for you
   // While flight is available, holding IS the control: a jump would fight it.
-  if (hasSuit() || heroCanFly()) { jumpBuffer = 0; return; }
+  if (hasSuit() || heroCanFly() || jetCanFly()) { jumpBuffer = 0; return; }
 
   const grounded = player.grounded || coyoteFrames > 0;
+
+  // SPIDER: a press in the air is a web, never an air jump.
+  if (isSpider() && !grounded) {
+    jumpBuffer = 0;
+    if (!web.active && webCooldown === 0 && websLeft > 0) shootWeb();
+    return;
+  }
 
   // A grounded jump requires that we are not already rising. An AIR jump has
   // no such rule - being able to rescue a botched jump mid-fall is the whole
@@ -446,6 +454,7 @@ function tryJump() {
   if (grounded && player.velocityY >= 0) {
     player.velocityY = JUMP_STRENGTH;
     airFrames = 0;
+    flightJumps = 1;                                // a new flight begins
     spawnDust(6, PLAYER_X + PLAYER_W / 2, player.y + PLAYER_H);
     playSfx("jump");
   } else if (!grounded && player.airJumps > 0) {
@@ -466,6 +475,7 @@ function tryJump() {
     player.airJumps--;
     player.velocityY = JUMP_STRENGTH * 0.86 * power_;
     airFrames = 0;
+    flightJumps++;                                  // the secret cloud counts these
     spawnFeathers(PLAYER_X + PLAYER_W / 2, player.y + PLAYER_H);
     playSfx("airJump");
     addPopup(used === 0 ? "DOUBLE!" : "TRIPLE!", stageDef().aura);
@@ -492,6 +502,10 @@ window.addEventListener("keydown", e => {
   // Bail BEFORE preventDefault: W and SPACE are jump keys but also ordinary
   // characters, and swallowing them here made them untypable in the name box.
   if (nameModalOpen || uiScreen !== "play") return;
+  // Steering keys for the flying forms. Harmless in every other form.
+  if (e.code === "ArrowDown"  || e.code === "KeyS") { e.preventDefault(); keyDive  = true; return; }
+  if (e.code === "ArrowRight" || e.code === "KeyD") { e.preventDefault(); keyBoost = true; return; }
+  if (e.code === "ArrowLeft"  || e.code === "KeyA") { e.preventDefault(); keyBrake = true; return; }
   if (e.code === "Space" || e.code === "ArrowUp" || e.code === "KeyW") {
     e.preventDefault();
     unlockAudio();
@@ -504,6 +518,9 @@ window.addEventListener("keydown", e => {
 });
 
 window.addEventListener("keyup", e => {
+  if (e.code === "ArrowDown"  || e.code === "KeyS") keyDive  = false;
+  if (e.code === "ArrowRight" || e.code === "KeyD") keyBoost = false;
+  if (e.code === "ArrowLeft"  || e.code === "KeyA") keyBrake = false;
   if (e.code === "Space" || e.code === "ArrowUp" || e.code === "KeyW") {
     e.preventDefault();
     releaseJump();
@@ -542,6 +559,53 @@ function onHtmlUi(target) {
   return !!(m && target && m.contains(target));
 }
 
+/* --- Drag steering ---------------------------------------------------------
+   The JET form flies where you drag. The drag is measured from where the
+   finger (or mouse) went down, in canvas pixels, and normalised over
+   DRAG_FULL so a thumb-sized movement is already full deflection - nobody
+   wants to sweep half the screen while running at full speed. Inside
+   DRAG_DEAD it is not a drag at all, just a held tap, and a held tap still
+   means "climb", exactly as it does for HERO and the Super Suit.
+
+   Keyboard gets the same vector from the arrow keys and WASD: hold to climb,
+   DOWN/S to dive, RIGHT/D to boost, LEFT/A to brake.
+   -------------------------------------------------------------------------- */
+
+const DRAG_DEAD = 16;    // canvas px before a hold becomes a drag
+const DRAG_FULL = 80;    // canvas px of full deflection
+
+let drag = { active: false, ox: 0, oy: 0, dx: 0, dy: 0 };
+let keyDive = false, keyBoost = false, keyBrake = false;
+let mouseHeld = false;
+
+function beginDrag(clientX, clientY) {
+  const pt = canvasPoint(clientX, clientY);
+  drag = { active: true, ox: pt.x, oy: pt.y, dx: 0, dy: 0 };
+}
+function moveDrag(clientX, clientY) {
+  if (!drag.active) return;
+  const pt = canvasPoint(clientX, clientY);
+  drag.dx = pt.x - drag.ox;
+  drag.dy = pt.y - drag.oy;
+}
+function endDrag() { drag = { active: false, ox: 0, oy: 0, dx: 0, dy: 0 }; }
+
+/**
+ * The steering vector for this frame: x in -1..1 (brake..boost), y in -1..1
+ * (climb..dive), or null when nothing is being asked for.
+ */
+function thrust() {
+  const mag = Math.hypot(drag.dx, drag.dy);
+  if (drag.active && mag > DRAG_DEAD) {
+    const clamp = v => Math.max(-1, Math.min(1, v));
+    return { x: clamp(drag.dx / DRAG_FULL), y: clamp(drag.dy / DRAG_FULL) };
+  }
+  let x = (keyBoost ? 1 : 0) - (keyBrake ? 1 : 0);
+  let y = (keyDive ? 1 : 0) - (jumpHeld ? 1 : 0);
+  if (x === 0 && y === 0) return null;
+  return { x, y };
+}
+
 function onTouchStart(e) {
   // Never interfere with a tap aimed at the name prompt.
   if (onHtmlUi(e.target)) return;
@@ -553,17 +617,26 @@ function onTouchStart(e) {
   const t = e.changedTouches[0];
   // A menu button swallows the tap so it never doubles as a jump.
   if (t && routePress(t.clientX, t.clientY)) return;
+  if (t && activeTouches === 1) beginDrag(t.clientX, t.clientY);
   pressJump();
+}
+
+function onTouchMove(e) {
+  if (onHtmlUi(e.target)) return;
+  e.preventDefault();
+  const t = e.changedTouches[0];
+  if (t) moveDrag(t.clientX, t.clientY);
 }
 
 function onTouchEnd(e) {
   if (onHtmlUi(e.target)) return;
   activeTouches = Math.max(0, activeTouches - e.changedTouches.length);
   e.preventDefault();
-  if (activeTouches === 0) releaseJump();   // only release on the LAST finger
+  if (activeTouches === 0) { releaseJump(); endDrag(); }   // only on the LAST finger
 }
 
 document.addEventListener("touchstart",  onTouchStart, { passive: false });
+document.addEventListener("touchmove",   onTouchMove,  { passive: false });
 document.addEventListener("touchend",    onTouchEnd,   { passive: false });
 document.addEventListener("touchcancel", onTouchEnd,   { passive: false });
 
@@ -581,11 +654,18 @@ document.addEventListener("mousedown", e => {
   unlockAudio();
   if (routePress(e.clientX, e.clientY)) { e.preventDefault(); return; }
   e.preventDefault();
+  mouseHeld = true;
+  beginDrag(e.clientX, e.clientY);
   pressJump();
+});
+document.addEventListener("mousemove", e => {
+  if (usingTouch || !mouseHeld) return;
+  moveDrag(e.clientX, e.clientY);
 });
 document.addEventListener("mouseup", e => {
   if (onHtmlUi(e.target)) return;
-  if (!usingTouch) releaseJump();
+  mouseHeld = false;
+  if (!usingTouch) { releaseJump(); endDrag(); }
 });
 
 /* --- Responsive canvas ---------------------------------------------------
@@ -740,6 +820,8 @@ function playSfx(name) {
     case "hurt":   tone(260, 0.32, "sawtooth", 0.20, 90);   break;
     case "lastLife": tone(180, 0.45, "square",  0.20, 120);  break;
     case "deny":   tone(200, 0.16, "square",   0.14, 140);  break;
+    case "shot":   tone(140, 0.14, "sawtooth", 0.22, 60);   break;
+    case "web":    tone(1400, 0.08, "square",  0.12, 500);  break;
     case "click":  tone(660, 0.06, "triangle", 0.10);       break;
   }
 }
@@ -808,8 +890,8 @@ const LEVELS = [
   { n: 5,  name: "SPIKE ALLEY", adds: "More spikes" },
   { n: 6,  name: "MIRAGE",      adds: "Fake platforms" },
   { n: 7,  name: "WARP ZONE",   adds: "Portals - read the exit first" },
-  { n: 8,  name: "FAST LANE",   adds: "Tighter gaps, narrower platforms" },
-  { n: 9,  name: "GAUNTLET",    adds: "Everything, faster" },
+  { n: 8,  name: "TURRET ROW",  adds: "Turrets - jump the shot" },
+  { n: 9,  name: "GAUNTLET",    adds: "Tighter gaps, everything faster" },
   { n: 10, name: "TURBO HELL",  adds: "Maximum difficulty" }
 ];
 
@@ -949,7 +1031,15 @@ function targetSpeed() {
   // MINI BOOSTER slows the whole world. Because distance AND score both
   // accumulate per frame at scrollSpeed, a slower world is a genuine trade:
   // more time to read the level, less score earned per second.
-  return base * (equipped("rocket").id === "mini" ? 0.92 : 1);
+  // JET's throttle. Boosting scores faster AND shortens reaction time; braking
+  // does the reverse. Speed has always been the honest price here.
+  return base * (equipped("rocket").id === "mini" ? 0.92 : 1) * jetSpeedMod;
+}
+
+/** The scroll for the coming frame: the target, plus whatever a swing left. */
+function frameSpeed() {
+  if (web && web.active) return scrollSpeed;    // the pendulum set it this frame
+  return targetSpeed() + (swingCarry || 0);
 }
 
 /**
@@ -1157,6 +1247,8 @@ function warpThrough(pt) {
     for (const wr of wires)    wr.x -= dx;
     for (const sg of springs)  sg.x -= dx;
     for (const q of portals)   { q.inX -= dx; if (q.outX !== null) q.outX -= dx; }
+    for (const tu of turrets)  tu.x -= dx;
+    for (const b of bullets)   b.x -= dx;
   }
   // No air jumps out the far side - you read the exit, now you live with it.
   // A spike DIRECTLY under the exit would be an unreadable death, so that one
@@ -1178,6 +1270,197 @@ function warpThrough(pt) {
       vx: Math.cos(a) * rand(1, 4), vy: Math.sin(a) * rand(1, 4),
       life: randInt(16, 30), size: rand(2, 5), color: i % 2 ? "#FF9F5A" : "#7FD4E6" });
   }
+}
+
+/* ---------------------------------------------------------------------------
+   THE SECRET CLOUD
+   ----------------------------------------------------------------------------
+   Now and then a cloud drifts along the very top of the screen that is not
+   like the others. It is almost transparent, and nothing about it says
+   "item". Most players never look twice at it. The ones who do, and who touch
+   it on the THIRD jump of one flight, get a jackpot.
+
+   The only tell is deliberately subtle, and it is the honest kind: the secret
+   cloud moves at WORLD speed, while every real cloud drifts at a fifth of it.
+   Someone who has played a lot notices that one cloud is keeping pace with
+   the platforms. Nobody is told; it can only be noticed. That is what makes
+   it a secret rather than a pickup with a low alpha.
+
+   Why the THIRD jump rather than a height: a held double jump already reaches
+   the ceiling of this world (measured: player top 26px, ceiling 18px), so
+   height alone gates nothing. Counting jumps within one flight makes it a
+   move you have to know - double up to it, then spend the third jump while
+   touching it - and one a flying form cannot stumble into.
+
+   What it pays is drawn from a table, and the table respects every rule the
+   economy already has: coins go to the wallet and never the score, and a
+   free shop item is only ever one the player's RECORD already qualifies them
+   for. The secret is a shortcut through patience, never through skill.
+   ------------------------------------------------------------------------ */
+
+const SECRET_Y = 44;           // where it drifts - the summit of the world
+const SECRET_R = 46;           // collection radius, generous: it is a reward
+
+let secrets;                   // { x, taken, phase } - at most one at a time
+let flightJumps;               // jumps taken since the last landing (ground + air)
+
+function secretChance() {
+  // Only once the player HAS a third jump, so every appearance is a real
+  // opportunity - and rarely, so each one is an event.
+  if (stage < 2) return 0;
+  return 0.022;
+}
+
+const SECRET_PRIZES = [
+  { id: "coins",   w: 40 },   // 300 coins into the wallet
+  { id: "hero",    w: 22 },   // evolve straight to HERO, this run
+  { id: "item",    w: 22 },   // a shop item you qualify for, free
+  { id: "jackpot", w: 8  },   // 1000 coins
+  { id: "lives",   w: 8  }    // every heart back
+];
+
+/** Pick a prize the player can actually use; fall back to coins otherwise. */
+function rollSecretPrize() {
+  const heroIx = STAGES.findIndex(s => s.name === "HERO");
+  const eligibleItems = [];
+  for (const slot of Object.keys(SHOP)) {
+    for (const it of SHOP[slot]) {
+      if (it.id === "none" || hasItem(slot, it.id)) continue;
+      if (it.needBest && save.best < it.needBest) continue;   // the record gate holds
+      eligibleItems.push({ slot, item: it });
+    }
+  }
+  const total = SECRET_PRIZES.reduce((n, q) => n + q.w, 0);
+  let roll = Math.random() * total, pick = "coins";
+  for (const q of SECRET_PRIZES) { roll -= q.w; if (roll <= 0) { pick = q.id; break; } }
+  if (pick === "hero" && stage >= heroIx) pick = "coins";
+  if (pick === "item" && !eligibleItems.length) pick = "coins";
+  if (pick === "lives" && lives >= MAX_LIVES) pick = "coins";
+  const out = { id: pick };
+  if (pick === "item") out.gift = eligibleItems[randInt(0, eligibleItems.length - 1)];
+  return out;
+}
+
+function grantSecret(sc) {
+  sc.taken = true;
+  const prize = rollSecretPrize();
+  let title = "", note = "";
+  const heroIx = STAGES.findIndex(s => s.name === "HERO");
+
+  if (prize.id === "coins" || prize.id === "jackpot") {
+    const n = prize.id === "jackpot" ? 1000 : 300;
+    save.wallet += n; runBanked += n;
+    title = "+" + n + " COINS"; note = "into your wallet";
+  } else if (prize.id === "hero") {
+    while (stage < heroIx) { stage++; }
+    player.airJumps = maxAirJumps(); heroFuel = HERO_FLIGHT_MAX;
+    title = "HERO FORM"; note = "4x jump + hold to fly";
+  } else if (prize.id === "item") {
+    const g = prize.gift;
+    save.owned.push(g.slot + ":" + g.item.id);
+    save.equip[g.slot] = g.item.id;
+    title = g.item.name.toUpperCase(); note = "yours, free - equipped";
+  } else if (prize.id === "lives") {
+    lives = MAX_LIVES; lastLifeWarned = false;
+    title = "ALL LIVES"; note = "every heart back";
+  }
+  save.secrets = (save.secrets || 0) + 1;
+  persist();
+
+  // Loud on purpose. A secret found should feel like the biggest thing that
+  // happened in the run, because for most players it will be.
+  pushBanner("SECRET FOUND!", title, note, "#FFFFFF", 200);
+  addPopup("SECRET!", "#FFFFFF");
+  hitStop = 10; shake(16);
+  playSfx("record");
+  for (let i = 0; i < 60; i++) {
+    const a = Math.random() * Math.PI * 2, sp = rand(1, 7);
+    particles.push({ x: sc.x, y: SECRET_Y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+      life: randInt(30, 60), size: rand(2, 6),
+      color: i % 3 === 0 ? "#FFD700" : "#FFFFFF" });
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   TURRETS (level 8+)
+   ----------------------------------------------------------------------------
+   A hatch in the ground. As you approach, a cannon rises out of it, fires ONE
+   shot back down the track at you, and sinks away again. Jump the shot.
+
+   Three things keep it a test of timing rather than a coin flip:
+
+     * The hatch is visible long before anything happens, with a light that
+       goes from green to blinking red as you get close - the same rule every
+       trap here follows: you always see it before it can hurt you.
+     * The cannon takes a beat to rise before it fires, so the pop itself is
+       the cue to jump. From the pop to the bullet reaching you is ~0.6s at
+       top speed, and the bullet flies at knee height, so ANY jump clears it.
+     * It fires once. A turret that kept firing would turn a stretch of ground
+       into a rhythm test the player could not read at a glance.
+
+   Only the BULLET hurts. The cannon body is scenery - it has usually sunk
+   again by the time you reach it, and a solid block rising out of the floor
+   under a committed jump would be exactly the unreadable death this game has
+   spent every level refusing to add.
+   ------------------------------------------------------------------------ */
+
+const TURRET_RANGE  = 500;   // pops when the player is this close (~0.6s to react)
+const TURRET_RISE   = 18;    // frames to rise - the cue
+const TURRET_HOLD   = 8;     // frames it stays up after firing
+const TURRET_SINK   = 18;    // frames to retract
+const BULLET_SPEED  = 5.5;   // on top of the scroll, so it closes fast
+const BULLET_R      = 7;
+
+let turrets;   // { x, y, state, t }  state: hidden | rising | up | sinking | done
+let bullets;   // { x, y, vx }
+
+function turretChance() {
+  if (levelOf() < 8) return 0;
+  return Math.min(0.5, 0.3 + (levelT() - 0.77) * 0.9);
+}
+
+function updateTurrets() {
+  for (const tu of turrets) {
+    if (tu.state === "hidden") {
+      if (tu.x - PLAYER_X < TURRET_RANGE && tu.x > PLAYER_X) { tu.state = "rising"; tu.t = 0; }
+      continue;
+    }
+    tu.t++;
+    if (tu.state === "rising" && tu.t >= TURRET_RISE) {
+      tu.state = "up"; tu.t = 0;
+      // Knee height. Standing, the player spans y-40..y; the shell sits so a
+      // jump of any height passes over it, and running into it is the mistake.
+      bullets.push({ x: tu.x - 22, y: tu.y - 22, vx: -BULLET_SPEED, flash: 6 });
+      playSfx("shot");
+      shake(3);
+      for (let i = 0; i < 8; i++) {
+        particles.push({ x: tu.x - 24, y: tu.y - 22,
+          vx: rand(-4, -1), vy: rand(-1.5, 1.5),
+          life: randInt(8, 14), size: rand(2, 5), color: i % 2 ? "#FFB300" : "#FFF3B0" });
+      }
+    } else if (tu.state === "up" && tu.t >= TURRET_HOLD) {
+      tu.state = "sinking"; tu.t = 0;
+    } else if (tu.state === "sinking" && tu.t >= TURRET_SINK) {
+      tu.state = "done";
+    }
+  }
+  for (const b of bullets) {
+    b.x += b.vx;                 // scrollWorld adds the world's own motion
+    if (b.flash > 0) b.flash--;
+    if (Math.floor(elapsed * 60) % 2 === 0) {
+      particles.push({ x: b.x + BULLET_R, y: b.y + rand(-3, 3),
+        vx: rand(1, 2.5), vy: rand(-0.4, 0.4),
+        life: randInt(6, 12), size: rand(2, 4), color: "#FF9F5A" });
+    }
+  }
+}
+
+/** 0 hidden .. 1 fully up, for drawing. */
+function turretLift(tu) {
+  if (tu.state === "rising")  return tu.t / TURRET_RISE;
+  if (tu.state === "up")      return 1;
+  if (tu.state === "sinking") return 1 - tu.t / TURRET_SINK;
+  return 0;
 }
 
 /**
@@ -1215,8 +1498,8 @@ function generatePlatform() {
   let y, width, type, wantsSpike = false, wantsWire = false;
   if (isFloating) {
     type  = "floating";
-    // Level 7 starts shaving the landing area itself.
-    const shrink = levelOf() >= 8 ? (1 - (levelT() - 0.77) * 0.6) : 1;
+    // Level 9 starts shaving the landing area itself.
+    const shrink = levelOf() >= 9 ? (1 - (levelT() - 0.88) * 0.6) : 1;
     width = rand(100, 150) * shrink;
     // Stay within one jump of the platform we are leaving.
     const highest = Math.max(MIN_PLAT_Y, last.y - MAX_STEP_UP);
@@ -1265,6 +1548,11 @@ function generatePlatform() {
   // the real one - the generator walks backwards from it to place the next.
   maybeAddDecoy(last, plat);
 
+  // The secret cloud rides the sky above this platform, one at a time.
+  if (!secrets.some(q => !q.taken) && Math.random() < secretChance()) {
+    secrets.push({ x: plat.x + plat.width * 0.5, taken: false, phase: Math.random() * 6 });
+  }
+
   decoratePlatform(plat, wantsSpike, wantsWire);
 }
 
@@ -1308,8 +1596,20 @@ function decoratePlatform(plat, wantsSpike, wantsWire) {
     if (clear) springs.push({ x: sx, y: plat.y, w: 34, pressed: 0 });
   }
 
+  // --- Turret hatch: ground only, past the landing zone, with room behind
+  //     it for the shot to be seen coming, clear of everything else. ---
+  if (plat.type === "ground" && plat.width >= LANDING_ZONE + 160 &&
+      Math.random() < turretChance()) {
+    const tx = plat.x + rand(LANDING_ZONE + 60, plat.width - 60);
+    const clear = (spikeX === null || Math.abs(tx - spikeX) > 110) &&
+                  (wireX === null || Math.abs(tx - wireX) > 110) &&
+                  !springs.some(q => Math.abs(q.x - tx) < 110);
+    if (clear) turrets.push({ x: tx, y: plat.y, state: "hidden", t: 0 });
+  }
+
   // --- Portal entry: on the surface, past the landing zone. ---
-  if (plat.type === "ground" && plat.width > 220 && Math.random() < portalChance()) {
+  if (plat.type === "ground" && plat.width > 220 && Math.random() < portalChance() &&
+      !turrets.some(q => Math.abs(q.x - plat.x - plat.width / 2) < plat.width)) {
     const ix = plat.x + rand(LANDING_ZONE, plat.width - 60);
     const clear = (spikeX === null || Math.abs(ix - spikeX) > 90) &&
                   (wireX === null || Math.abs(ix - wireX) > 90);
@@ -1476,8 +1776,125 @@ const STAGES = [
   // a short burst that refills on the ground - a repeatable rescue rather than
   // a long cruise. Buying the suit still buys something the evolution cannot.
   { name: "HERO",   airJumps: 3, mult: 2.00, glide: true,  reach: 2.95,
-    body: "#4FC3F7", dark: "#0288D1", back: "#01579B", aura: "#E1F5FE" }
+    body: "#4FC3F7", dark: "#0288D1", back: "#01579B", aura: "#E1F5FE" },
+  // JET: the fifth form, and the first that STEERS. HERO holds to rise; JET
+  // flies where you drag, with a tank that empties in seconds and only
+  // refills on the ground. It is deliberately a sprint, not a cruise: a long
+  // budget would let the player skip the level, and the level is the game.
+  // Jump-only reach is HERO's, because gaps are never sized for flight.
+  { name: "JET",    airJumps: 3, mult: 2.40, glide: true,  reach: 2.95,
+    hud: "DRAG TO FLY",
+    body: "#EF5350", dark: "#C62828", back: "#7F0000", aura: "#FFD180" },
+  // SPIDER: the summit. No wings, no jets - a web. See the WEB SWING section.
+  { name: "SPIDER", airJumps: 0, mult: 2.80, glide: false, reach: 2.95,
+    hud: "TAP IN AIR TO WEB",
+    body: "#E53935", dark: "#1E3A8A", back: "#0F1F4D", aura: "#BBDEFB" }
 ];
+
+/* --- JET's tank ------------------------------------------------------------
+   Five seconds of thrust, refilled in about five on the ground. The bar is
+   drawn twice: in the HUD, and as a thin gauge beside the character while
+   flying, because the eye is on the character and not the corner when the
+   tank is what decides whether the next gap is survivable.
+   -------------------------------------------------------------------------- */
+
+const JET_FUEL_MAX    = 300;
+const JET_REFILL_RATE = 1.0;
+const JET_CLIMB       = -5.2;   // full-deflection vertical speeds
+const JET_DIVE        =  6.0;
+const JET_BOOST       =  0.45;  // +45% scroll at full forward drag
+const JET_BRAKE       =  0.30;  // -30% at full back drag
+
+let jetFuel;
+let jetSpeedMod = 1;            // eased scroll multiplier while steering
+
+function jetCanFly() { return stageDef().name === "JET" && jetFuel > 0; }
+
+/* ---------------------------------------------------------------------------
+   THE WEB SWING (SPIDER)
+   ----------------------------------------------------------------------------
+   Hold to jump; keep holding and, once the jump has peaked, a web fires to a
+   point up ahead and you swing under it. Let go to drop, carrying the speed
+   the swing gave you. Press again in the air to fire another.
+
+   The engine never moves the player sideways - the world moves - so the swing
+   is computed as a real pendulum in world space and its HORIZONTAL velocity
+   is simply handed to the scroll for that frame. Dip under the anchor and
+   the world rushes past; rise up the far side and it slows. That is what
+   makes it feel like a swing rather than an animation.
+
+   Two rules keep it honest in an auto-runner:
+     * The web lets go by itself the instant the swing would carry you
+       BACKWARD. A runner that scrolls the wrong way reads as broken, and the
+       top of the forward arc is where a swing wants to be released anyway.
+     * The anchor is always at the same offset ahead and above you, so every
+       swing is the same shape and can be learned. The skill is WHEN.
+
+   Gaps are sized from the swing's measured reach, exactly as every other
+   form's are measured from its jumps (see the reach test).
+   ------------------------------------------------------------------------ */
+
+const WEB_AHEAD    = 150;    // anchor offset, ahead of the player
+const WEB_UP       = 170;    // ...and above
+const WEB_GRAVITY  = 0.9;    // felt on the rope
+const WEB_MIN_VX   = 1.0;    // let go before the swing turns backward
+const WEB_COOLDOWN = 8;      // frames before another web can fire
+// Three webs per flight, refilled by landing - the same shape as air jumps.
+// Without a budget a held button chains swings along the ceiling forever,
+// and "hovering forever is impossible by construction" is a rule every
+// flying form in this game keeps.
+const WEB_MAX      = 3;
+
+let web;           // { active, ax, ay, len, vx, vy }
+let webCooldown;
+let websLeft;      // webs remaining in this flight
+let swingCarry;    // extra scroll speed carried out of a swing, decaying
+
+function isSpider() { return stageDef().name === "SPIDER"; }
+
+function shootWeb() {
+  if (websLeft <= 0) return;
+  websLeft--;
+  const cy = player.y + PLAYER_H / 2;
+  const ay = Math.max(FLY_CEIL + 10, cy - WEB_UP);
+  const ax = PLAYER_X + WEB_AHEAD;
+  web = { active: true, ax, ay, len: Math.hypot(ax - PLAYER_X, ay - cy),
+          vx: scrollSpeed, vy: Math.max(player.velocityY, 0) };
+  webCooldown = WEB_COOLDOWN;
+  springArc = false;
+  holdFrames = 0;
+  playSfx("web");
+  addPopup("THWIP!", "#BBDEFB");
+}
+
+function releaseWeb(auto) {
+  if (!web.active) return;
+  // Leave with the swing's momentum: vertical straight into the fall, and
+  // horizontal as a burst of extra scroll that fades over a second.
+  player.velocityY = Math.max(-14, Math.min(MAX_FALL_SPEED, web.vy));
+  swingCarry = Math.max(0, web.vx - targetSpeed());
+  web.active = false;
+  airFrames = 0;
+  if (!auto) playSfx("airJump");
+}
+
+/**
+ * One frame of the pendulum, position-based: move by velocity, pull back onto
+ * the rope, and read the velocity off the correction. Returns the world's
+ * horizontal motion for this frame.
+ */
+function swingStep() {
+  const cy = player.y + PLAYER_H / 2;
+  const rx = PLAYER_X - web.ax, ry = cy - web.ay;
+  let nx = rx + web.vx, ny = ry + web.vy + WEB_GRAVITY;
+  const d = Math.hypot(nx, ny);
+  if (d > web.len) { nx *= web.len / d; ny *= web.len / d; }
+  web.vx = nx - rx;
+  web.vy = ny - ry;
+  if (web.vx < WEB_MIN_VX) { releaseWeb(true); return Math.max(web.vx, 0); }
+  player.y = web.ay + ny - PLAYER_H / 2;
+  return web.vx;
+}
 
 /* --- HERO's flight burst ---------------------------------------------------
    Small, and it recharges. That shape is chosen so the answer to "should I
@@ -1547,7 +1964,9 @@ function evolve() {
   evolveFlash = 22;
   const note = stage === 1 ? "DOUBLE JUMP UNLOCKED"
              : stage === 2 ? "TRIPLE JUMP + HOLD TO GLIDE"
-             : "4x JUMP + HOLD TO FLY";
+             : stage === 3 ? "4x JUMP + HOLD TO FLY"
+             : stage === 4 ? "DRAG TO FLY - WATCH THE TANK"
+             : "TAP IN THE AIR TO SWING";
   pushBanner("STAGE " + (stage + 1), s.name, note, s.aura, 165);
   hitStop = 10;
   shake(20);
@@ -1568,6 +1987,7 @@ function evolve() {
   // the moment of transformation should feel like a surge, not a cooldown.
   player.airJumps = maxAirJumps();
   if (s.name === "HERO") heroFuel = HERO_FLIGHT_MAX;
+  if (s.name === "JET")  jetFuel  = JET_FUEL_MAX;
   addPopup("STAGE " + (stage + 1) + " - " + s.name + "!", s.aura);
 }
 
@@ -2088,7 +2508,7 @@ function nextUnlock() {
 
 function defaultSave() {
   return { best: 0, bestScore: 0, bestCombo: 0, totalCoins: 0, runs: 0, bestStage: "RUNNER",
-           rank: 1, missionsDone: 0, tier: {},
+           rank: 1, missionsDone: 0, tier: {}, secrets: 0,
            wallet: 0, owned: [], equip: { hat: "none", rocket: "none", trail: "none", pet: "none" },
            name: "", clientId: "" };
 }
@@ -2389,10 +2809,34 @@ function checkMissions() {
       playSfx("mission");
       shake(6);
       persist();
+      stats.runMissions++;
       // The real reward: a form upgrade waiting on the track ahead.
       spawnEvolutionCore();
+      rerollMission(m);
     }
   }
+}
+
+/**
+ * Replace a finished mission with a fresh one, so there are always three
+ * live goals. Three missions per run capped the ladder at HERO; with six
+ * forms the climb needs five cores, and a player who has cleared their three
+ * should not be left with nothing to chase for the rest of the run.
+ *
+ * The replacement must not already be complete - "run 300m" handed to a
+ * player at 900m would finish next frame and drop a core for nothing - so
+ * candidates are filtered on live progress. If nothing qualifies the done
+ * mission simply stays on the board.
+ */
+function rerollMission(done) {
+  const live = new Set(missions.filter(q => !q.done).map(q => q.id));
+  const candidates = MISSION_POOL
+    .filter(d => !live.has(d.id))
+    .map(d => makeMission(d))
+    .filter(m => missionProgress(m) < m.target);
+  if (!candidates.length) return;
+  const idx = missions.indexOf(done);
+  missions[idx] = candidates[randInt(0, candidates.length - 1)];
 }
 
 function missionProgress(m) {
@@ -2401,7 +2845,7 @@ function missionProgress(m) {
 
 function resetRunStats() {
   stats = { runCoins: 0, runMeters: 0, runBestMult: 1,
-            runNearMiss: 0, runBigAir: 0, runPowerups: 0 };
+            runNearMiss: 0, runBigAir: 0, runPowerups: 0, runMissions: 0 };
 }
 
 /** Bank a finished run into the persisted profile. */
@@ -2494,30 +2938,58 @@ function updatePlayer() {
   // who owns BOTH spends the finite budget before the renewable one.
   const suitFlight = hasSuit() && flightMeter > 0;
   const heroFlight = !suitFlight && heroCanFly();
-  flying = (suitFlight || heroFlight) && jumpHeld && !gameOver;
+  // JET flies on the steering vector, not on the button alone.
+  const th = thrust();
+  const jetFlight = !suitFlight && jetCanFly() && th !== null;
+  flying = !gameOver && (jetFlight || ((suitFlight || heroFlight) && jumpHeld));
 
-  // HERO's fuel only comes back while actually running on the ground, so
-  // hovering forever is impossible by construction.
+  // Fuel only comes back while actually running on the ground, so hovering
+  // forever is impossible by construction.
   if (!flying && player.grounded && stageDef().name === "HERO") {
     heroFuel = Math.min(HERO_FLIGHT_MAX, heroFuel + HERO_REFILL_RATE);
   }
+  if (!flying && player.grounded && stageDef().name === "JET") {
+    jetFuel = Math.min(JET_FUEL_MAX, jetFuel + JET_REFILL_RATE);
+  }
 
   if (flying) {
-    // Ease toward a steady climb rather than snapping to it, so the ascent
-    // reads as a smooth lift rather than a teleport.
-    player.velocityY += (FLY_RISE - player.velocityY) * FLY_EASE;
-    if (suitFlight) flightMeter--; else heroFuel--;
+    if (jetFlight) {
+      // Steer: the drag's vertical component picks a climb or dive speed, and
+      // the horizontal one leans on the throttle. Both eased, so a twitch of
+      // the thumb bends the flight path rather than snapping it.
+      const target = th.y < 0 ? JET_CLIMB * -th.y : JET_DIVE * th.y;
+      player.velocityY += (target - player.velocityY) * 0.22;
+      const mod = 1 + (th.x > 0 ? th.x * JET_BOOST : th.x * JET_BRAKE);
+      jetSpeedMod += (mod - jetSpeedMod) * 0.15;
+      jetFuel--;
+      // Jet flames from the boots, denser the harder the burn.
+      const burn = 1 + Math.abs(th.y) + Math.max(0, th.x);
+      for (let i = 0; i < burn; i++) {
+        particles.push({
+          x: PLAYER_X + rand(8, PLAYER_W - 8), y: player.y + PLAYER_H - 2,
+          vx: rand(-2.5, -0.5) - Math.max(0, th.x) * 2, vy: rand(1.5, 4.5) - th.y * 1.5,
+          life: randInt(8, 16), size: rand(3, 7),
+          color: Math.random() < 0.5 ? "#FF6D00" : (Math.random() < 0.5 ? "#FFD180" : "#FFF3B0")
+        });
+      }
+    } else {
+      // Ease toward a steady climb rather than snapping to it, so the ascent
+      // reads as a smooth lift rather than a teleport.
+      player.velocityY += (FLY_RISE - player.velocityY) * FLY_EASE;
+      if (suitFlight) flightMeter--; else heroFuel--;
+      if (Math.floor(elapsed * 60) % 3 === 0) {
+        particles.push({
+          x: PLAYER_X + rand(4, PLAYER_W - 4), y: player.y + PLAYER_H,
+          vx: rand(-1.2, 0.2), vy: rand(0.6, 2.0),
+          life: randInt(12, 22), size: rand(2, 5), color: "#9FD8FF"
+        });
+      }
+    }
     airFrames = 0;            // flying must not farm the big-air bonus
     player.airJumps = maxAirJumps();
-    if (Math.floor(elapsed * 60) % 3 === 0) {
-      particles.push({
-        x: PLAYER_X + rand(4, PLAYER_W - 4), y: player.y + PLAYER_H,
-        vx: rand(-1.2, 0.2), vy: rand(0.6, 2.0),
-        life: randInt(12, 22), size: rand(2, 5), color: "#9FD8FF"
-      });
-    }
     if (suitFlight && flightMeter === 0) burnOutSuit();
   }
+  if (!jetFlight) jetSpeedMod += (1 - jetSpeedMod) * 0.1;
 
   // GLIDE (stage 3 only)
   // --------------------
@@ -2529,18 +3001,35 @@ function updatePlayer() {
   gliding = !flying && stageDef().glide && jumpHeld && !player.grounded &&
             player.velocityY > 0 && player.airJumps <= 0;
 
-  // Asymmetric gravity: float up, drop fast. See the GRAVITY constants.
-  // Flight supplies its own vertical motion, so gravity steps aside for it.
-  const g = flying ? 0
-                   : springArc ? SPRING_GRAVITY
-                   : (player.velocityY < 0 ? GRAVITY
-                                           : (gliding ? GRAVITY_FALL * 0.30 : GRAVITY_FALL));
-  player.velocityY += g;
+  // SPIDER: a held jump fires the web once the jump has peaked, so one hold
+  // is "jump, then swing". A fresh press in the air fires at once (tryJump).
+  if (webCooldown > 0) webCooldown--;
+  if (isSpider() && !player.grounded && jumpHeld && !web.active && websLeft > 0 &&
+      webCooldown === 0 && player.velocityY >= -1 && !flying) {
+    shootWeb();
+  }
 
-  const cap = gliding ? 3.2 : MAX_FALL_SPEED;
-  if (player.velocityY > cap) player.velocityY = cap;
+  if (web.active) {
+    // On the rope: the pendulum owns both axes this frame.
+    const vx = swingStep();
+    scrollSpeed = vx;
+    airFrames = 0;
+  } else {
+    // Asymmetric gravity: float up, drop fast. See the GRAVITY constants.
+    // Flight supplies its own vertical motion, so gravity steps aside for it.
+    const g = flying ? 0
+                     : springArc ? SPRING_GRAVITY
+                     : (player.velocityY < 0 ? GRAVITY
+                                             : (gliding ? GRAVITY_FALL * 0.30 : GRAVITY_FALL));
+    player.velocityY += g;
 
-  player.y += player.velocityY;
+    const cap = gliding ? 3.2 : MAX_FALL_SPEED;
+    if (player.velocityY > cap) player.velocityY = cap;
+
+    player.y += player.velocityY;
+  }
+  // The speed a swing hands you fades over about a second.
+  if (swingCarry > 0) { swingCarry *= 0.94; if (swingCarry < 0.05) swingCarry = 0; }
 
   // The world has no sky above this line; flying into it would take the player
   // off-screen with no way to judge where they are.
@@ -2597,6 +3086,13 @@ function scrollWorld() {
   for (const wr of wires)    wr.x -= s;
   for (const sp of springs)  { sp.x -= s; if (sp.pressed > 0) sp.pressed--; }
   for (const pt of portals)  { pt.inX -= s; if (pt.outX !== null) pt.outX -= s; pt.spin += 0.12; }
+  for (const tu of turrets)  tu.x -= s;
+  for (const b of bullets)   b.x -= s;
+  // World speed, NOT cloud speed. This one line is the whole tell.
+  for (const sc of secrets)  { sc.x -= s; sc.phase += 0.02; }
+  // The web's anchor is stuck to the world, so it scrolls with it. Without
+  // this the pendulum measures itself against a point glued to the screen.
+  if (web.active) web.ax -= s;
   for (const co of cores)    { co.x -= s; co.bob += 0.07; co.spin += 0.11; }
 
   for (const p of popups) { p.x -= s; p.y += p.vy; p.life--; }
@@ -2671,6 +3167,9 @@ function recycleWorld() {
   wires     = wires.filter(w => w.x + w.w > -40);
   springs   = springs.filter(q => q.x + q.w > -40);
   portals   = portals.filter(q => (q.outX === null ? q.inX : q.outX) > -60);
+  turrets   = turrets.filter(q => q.x > -60);
+  bullets   = bullets.filter(q => q.x > -40);
+  secrets   = secrets.filter(q => q.x > -90 && !q.taken);
   // A core that scrolls past uncollected is NOT thrown away. The player earned
   // it by finishing a mission; losing it to a single mistimed jump would make
   // the reward feel arbitrary and punish the exact moment it should celebrate.
@@ -2767,11 +3266,13 @@ function checkCollisions() {
 
   // Not standing on anything? Then we are airborne (walked off an edge).
   player.grounded = landed;
-  if (landed) springArc = false;
+  if (landed) { springArc = false; websLeft = WEB_MAX;
+                if (web.active) { web.active = false; swingCarry = 0; } }
   if (!landed) {
     player.isJumping = true;
   } else {
     airFrames = 0;
+    flightJumps = 0;
     // Landing refills every mid-air jump the current form provides.
     player.airJumps = maxAirJumps();
   }
@@ -2820,6 +3321,18 @@ function checkCollisions() {
         py + PLAYER_H - 4 > s.y + 8 &&
         py + 4 < s.y + s.size) {
       die("spike");
+      return;
+    }
+  }
+
+  // --- Bullets: a knee-high shell. Inset like the spikes so a close jump
+  //     reads as a close jump, not as a hit. ---
+  for (const b of bullets) {
+    if (invuln > 0) break;
+    if (b.x + BULLET_R - 3 > px + 6 && b.x - BULLET_R + 3 < px + PLAYER_W - 6 &&
+        b.y + BULLET_R - 3 > py + 4 && b.y - BULLET_R + 3 < py + PLAYER_H - 4) {
+      bullets = bullets.filter(q => q !== b);
+      die("shot");
       return;
     }
   }
@@ -2877,6 +3390,16 @@ function checkCollisions() {
       pu.taken = true;
       activatePower(pu.type);
       if (pu.type === "wings") player.airJumps = 1;
+    }
+  }
+
+  // --- The secret cloud: only on the third jump of one flight, and never
+  //     by flying into it. ---
+  for (const sc of secrets) {
+    if (sc.taken) continue;
+    const dx = cx - sc.x, dy = cy - SECRET_Y;
+    if (dx * dx + dy * dy < SECRET_R * SECRET_R && flightJumps >= 3 && !flying) {
+      grantSecret(sc);
     }
   }
 
@@ -3022,14 +3545,23 @@ function reviveOnSafeGround() {
 
   const dx = (target.x + 30) - PLAYER_X;
   if (dx > 0) {
+    // EVERY world layer, not just the first few. Wires, springs and portals
+    // used to stay behind while their platforms slid forward, so a revive
+    // could put a tripwire in mid-air over a gap.
     for (const p of platforms) p.x -= dx;
     for (const c of coins)     c.x -= dx;
     for (const sp of spikes)   sp.x -= dx;
     for (const pu of powerups) pu.x -= dx;
     for (const co of cores)    co.x -= dx;
+    for (const wr of wires)    wr.x -= dx;
+    for (const sg of springs)  sg.x -= dx;
+    for (const pt of portals)  { pt.inX -= dx; if (pt.outX !== null) pt.outX -= dx; }
+    for (const tu of turrets)  tu.x -= dx;
   }
   // Clear anything hostile from the landing zone itself.
   spikes = spikes.filter(sp => !(sp.x > PLAYER_X - 90 && sp.x < PLAYER_X + 180));
+  turrets = turrets.filter(tu => !(tu.x > PLAYER_X - 90 && tu.x < PLAYER_X + TURRET_RANGE));
+  bullets = [];
 
   player.y = target.y - PLAYER_H - 50;
   player.velocityY = 0;
@@ -3062,6 +3594,9 @@ function spendLife(cause) {
     addPopup("-1 LIFE", "#FF6B6B");
   }
   player.airJumps = maxAirJumps();
+  // A web still attached to a world that is about to slide would swing the
+  // revived player from a stale anchor.
+  web.active = false; swingCarry = 0;
 
   if (cause === "fall") reviveOnSafeGround();
 
@@ -3106,7 +3641,7 @@ function die(cause) {
 
   // A shield eats one hit instead of ending the run. Falling into a pit is
   // never survivable by a shield - there is no ground left to stand on.
-  if (cause === "spike" && power.shield > 0) {
+  if ((cause === "spike" || cause === "shot") && power.shield > 0) {
     power.shield = 0;
     invuln = 90;
     shake(14);
@@ -3476,6 +4011,67 @@ function drawWires() {
   }
 }
 
+function drawTurrets() {
+  for (const tu of turrets) {
+    if (tu.x > W + 60 || tu.x < -60) continue;
+    const lift = turretLift(tu);
+    const near = tu.x - PLAYER_X < TURRET_RANGE * 1.6;
+    ctx.lineWidth = 2; ctx.strokeStyle = "#12202c";
+
+    // The cannon, clipped to the ground so it truly rises OUT of the hatch.
+    if (lift > 0) {
+      ctx.save();
+      ctx.beginPath(); ctx.rect(tu.x - 40, tu.y - 60, 80, 60); ctx.clip();
+      const top = tu.y - 34 * lift;
+      // body
+      ctx.fillStyle = "#546E7A";
+      ctx.fillRect(tu.x - 14, top, 28, 40); ctx.strokeRect(tu.x - 14, top, 28, 40);
+      ctx.fillStyle = "#37474F";
+      ctx.fillRect(tu.x - 14, top, 28, 6);
+      // barrel, pointing back down the track
+      const recoil = tu.state === "up" ? (1 - tu.t / TURRET_HOLD) * 5 : 0;
+      ctx.fillStyle = "#263238";
+      ctx.fillRect(tu.x - 34 + recoil, top + 6, 26, 12); ctx.strokeRect(tu.x - 34 + recoil, top + 6, 26, 12);
+      ctx.fillStyle = "#000";
+      ctx.beginPath(); ctx.arc(tu.x - 34 + recoil, top + 12, 5, 0, Math.PI * 2); ctx.fill();
+      // muzzle flash
+      if (tu.state === "up" && tu.t < 4) {
+        ctx.fillStyle = "rgba(255,230,120,0.95)";
+        ctx.beginPath();
+        ctx.moveTo(tu.x - 36, top + 12); ctx.lineTo(tu.x - 62, top + 2);
+        ctx.lineTo(tu.x - 52, top + 12); ctx.lineTo(tu.x - 62, top + 22);
+        ctx.closePath(); ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    // The hatch plate, flush with the surface, and its warning light.
+    ctx.fillStyle = "#455A64";
+    ctx.fillRect(tu.x - 22, tu.y - 5, 44, 5); ctx.strokeRect(tu.x - 22, tu.y - 5, 44, 5);
+    ctx.fillStyle = "#78909C";
+    ctx.fillRect(tu.x - 18, tu.y - 4, 8, 2); ctx.fillRect(tu.x + 10, tu.y - 4, 8, 2);
+    const armed = tu.state === "hidden" && near;
+    const blink = armed ? (Math.floor(elapsed * 8) % 2 === 0) : false;
+    ctx.fillStyle = tu.state === "done" ? "#546E7A"
+                  : armed ? (blink ? "#FF1744" : "#7A0A1A") : "#00E676";
+    ctx.beginPath(); ctx.arc(tu.x, tu.y - 2.5, 3, 0, Math.PI * 2); ctx.fill();
+  }
+
+  for (const b of bullets) {
+    if (b.x > W + 20 || b.x < -20) continue;
+    ctx.fillStyle = "#1a1a1a"; ctx.strokeStyle = "#000"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(b.x, b.y, BULLET_R, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    // a mean little face, so the shell reads as a character rather than a dot
+    ctx.fillStyle = "#FFFFFF";
+    ctx.beginPath(); ctx.arc(b.x - 3, b.y - 1.5, 1.8, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "#FFFFFF"; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(b.x - 6, b.y - 5); ctx.lineTo(b.x - 1, b.y - 3.5); ctx.stroke();
+    ctx.fillStyle = "#FF6D00";
+    ctx.beginPath(); ctx.moveTo(b.x + 5, b.y - 4); ctx.lineTo(b.x + 15, b.y); ctx.lineTo(b.x + 5, b.y + 4);
+    ctx.closePath(); ctx.fill();
+  }
+}
+
 function drawSpikes() {
   for (const s of spikes) {
     if (s.x > W + 40 || s.x + s.size < -40) continue;
@@ -3567,6 +4163,27 @@ function drawPlayer() {
   const h = PLAYER_H - squash;
   const x = PLAYER_X - squash / 2;
   const y = player.y + bob + squash;
+
+  // SPIDER's web line, drawn from the hand to the anchor, behind the body.
+  if (SD.name === "SPIDER" && web.active) {
+    const hx = x + w * 0.86, hy = y + h * 0.30;
+    ctx.save();
+    ctx.strokeStyle = "rgba(255,255,255,0.95)"; ctx.lineWidth = 2.2;
+    ctx.beginPath(); ctx.moveTo(hx, hy);
+    // a hair of sag, so it reads as a line under load rather than a ruler
+    ctx.quadraticCurveTo((hx + web.ax) / 2, (hy + web.ay) / 2 + 8, web.ax, web.ay);
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(180,210,255,0.6)"; ctx.lineWidth = 0.8;
+    ctx.stroke();
+    // the splat where it stuck
+    ctx.strokeStyle = "#FFFFFF"; ctx.lineWidth = 1.5;
+    for (let i = 0; i < 6; i++) {
+      const a = i * Math.PI / 3;
+      ctx.beginPath(); ctx.moveTo(web.ax, web.ay);
+      ctx.lineTo(web.ax + Math.cos(a) * 9, web.ay + Math.sin(a) * 9); ctx.stroke();
+    }
+    ctx.restore();
+  }
 
   // Equipped pack rides on the character's back, behind the body.
   if (equipped("rocket").id === "cape") {
@@ -3665,17 +4282,37 @@ function drawPlayer() {
 
   // --- Face: two dot eyes and a smile ---
   const fx = bodyX + bodyW / 2;
-  ctx.fillStyle = "#000";
-  ctx.beginPath();
-  ctx.arc(fx - bodyW * 0.20, bodyH * 0.38, 3.2, 0, Math.PI * 2);
-  ctx.arc(fx + bodyW * 0.20, bodyH * 0.38, 3.2, 0, Math.PI * 2);
-  ctx.fill();
+  if (SD.name === "JET") {
+    // A gold visor with two glowing eye slits instead of a face: the helmet
+    // is what says "suit" at a glance.
+    ctx.fillStyle = "#FFC107";
+    ctx.fillRect(bodyX + 3, bodyH * 0.22, bodyW - 6, bodyH * 0.36);
+    ctx.strokeRect(bodyX + 3, bodyH * 0.22, bodyW - 6, bodyH * 0.36);
+    ctx.fillStyle = "#E1F5FE";
+    ctx.fillRect(fx - bodyW * 0.30, bodyH * 0.34, bodyW * 0.20, 3);
+    ctx.fillRect(fx + bodyW * 0.10, bodyH * 0.34, bodyW * 0.20, 3);
+  } else if (SD.name === "SPIDER") {
+    // Two big white mask lenses, rimmed dark, on the red body.
+    for (const side of [-1, 1]) {
+      ctx.fillStyle = "#FFFFFF"; ctx.strokeStyle = "#0F1F4D"; ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.ellipse(fx + side * bodyW * 0.22, bodyH * 0.42, bodyW * 0.16, bodyH * 0.17, side * 0.5, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+    }
+    ctx.strokeStyle = C.outline; ctx.lineWidth = 2;
+  } else {
+    ctx.fillStyle = "#000";
+    ctx.beginPath();
+    ctx.arc(fx - bodyW * 0.20, bodyH * 0.38, 3.2, 0, Math.PI * 2);
+    ctx.arc(fx + bodyW * 0.20, bodyH * 0.38, 3.2, 0, Math.PI * 2);
+    ctx.fill();
 
-  ctx.strokeStyle = "#000";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.arc(fx, bodyH * 0.58, bodyW * 0.24, 0.15 * Math.PI, 0.85 * Math.PI);
-  ctx.stroke();
+    ctx.strokeStyle = "#000";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(fx, bodyH * 0.58, bodyW * 0.24, 0.15 * Math.PI, 0.85 * Math.PI);
+    ctx.stroke();
+  }
 
   // Equipped hat, inside the rotation so it leans with the run cycle.
   if (equipped("hat").id !== "none") {
@@ -3684,6 +4321,33 @@ function drawPlayer() {
 
   ctx.restore();
   ctx.globalAlpha = 1;
+
+  // JET: boot flames while thrusting, and a fuel gauge beside the character.
+  if (SD.name === "JET") {
+    const th = thrust();
+    if (flying && th) {
+      const flick = 0.75 + Math.sin(elapsed * 70) * 0.25;
+      const len = (14 + Math.abs(th.y) * 10 + Math.max(0, th.x) * 8) * flick;
+      for (const bx of [x + w * 0.28, x + w * 0.72]) {
+        ctx.fillStyle = "#FF6D00";
+        ctx.beginPath();
+        ctx.moveTo(bx - 6, y + h - 1); ctx.lineTo(bx + 6, y + h - 1);
+        ctx.lineTo(bx - th.x * 4, y + h + len); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = "#FFF3B0";
+        ctx.beginPath();
+        ctx.moveTo(bx - 3, y + h - 1); ctx.lineTo(bx + 3, y + h - 1);
+        ctx.lineTo(bx - th.x * 2, y + h + len * 0.55); ctx.closePath(); ctx.fill();
+      }
+    }
+    // The gauge: a slim vertical bar just left of the body, red when nearly
+    // dry. It is here, not only in the corner, because the character is where
+    // the eye is when the tank decides whether the next gap is survivable.
+    const frac = jetFuel / JET_FUEL_MAX;
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.fillRect(x - 12, y - 2, 6, h + 4);
+    ctx.fillStyle = frac < 0.25 ? "#FF3B3B" : "#FFB300";
+    ctx.fillRect(x - 11, y - 1 + (h + 2) * (1 - frac), 4, (h + 2) * frac);
+  }
 
   // SHIELD: a translucent bubble drawn over the character. It sits outside the
   // rotated transform so it stays a circle no matter how the body is tilted.
@@ -3698,6 +4362,29 @@ function drawPlayer() {
     ctx.fill();
     ctx.fillStyle = "rgba(255,255,255,0.55)";
     ctx.beginPath(); ctx.arc(cx - 8, cy - 9, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+}
+
+/**
+ * The secret cloud. Drawn in FRONT of the world (it is on the player's layer,
+ * which is the tell), in the biome's cloud colour so it never contrasts, and
+ * at an alpha that breathes between barely-there and faint. It must never
+ * look like an item: no glow, no outline, no bob.
+ */
+function drawSecrets() {
+  for (const sc of secrets) {
+    if (sc.taken || sc.x < -90 || sc.x > W + 90) continue;
+    const a = 0.26 + Math.sin(sc.phase) * 0.08;
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.fillStyle = pal.cloud;
+    const s = 0.82;
+    ctx.beginPath();
+    ctx.arc(sc.x - 26 * s, SECRET_Y + 4 * s, 20 * s, 0, Math.PI * 2);
+    ctx.arc(sc.x,          SECRET_Y - 6 * s, 26 * s, 0, Math.PI * 2);
+    ctx.arc(sc.x + 28 * s, SECRET_Y + 3 * s, 19 * s, 0, Math.PI * 2);
+    ctx.fill();
     ctx.restore();
   }
 }
@@ -4556,7 +5243,8 @@ function drawLifeLost() {
                "bold 22px 'Trebuchet MS', sans-serif",
                lives === 1 ? "#FF3B3B" : "#FFFFFF", "center", 3.5);
 
-  const what = lifePauseCause === "spike" ? "Hit a spike" : "Fell";
+  const what = lifePauseCause === "spike" ? "Hit a spike"
+             : lifePauseCause === "shot"  ? "Shot by a turret" : "Fell";
   outlinedText(what + "  ·  form and combo lost", W / 2, 282,
                "bold 17px 'Trebuchet MS', sans-serif", "#B9E6FF", "center", 3);
 
@@ -4663,7 +5351,7 @@ function drawFocusMission() {
 function drawStageHud() {
   const SD = stageDef();
   const jumps = 1 + maxAirJumps();
-  const label = SD.name + "  " + jumps + "x JUMP" + (SD.glide ? " + GLIDE" : "");
+  const label = SD.name + "  " + (SD.hud || (jumps + "x JUMP" + (SD.glide ? " + GLIDE" : "")));
 
   ctx.fillStyle = "rgba(0,0,0,0.55)";
   ctx.fillRect(18, H - 92, 236, 26);
@@ -4692,6 +5380,10 @@ function drawPowerHud() {
     // reason HERO's flight feels different from the suit's one-shot budget.
     items.push({ c: heroFuel / HERO_FLIGHT_MAX < 0.25 ? "#FF6B6B" : "#4FC3F7",
                  label: "FLY", frac: heroFuel / HERO_FLIGHT_MAX });
+  }
+  if (stageDef().name === "JET") {
+    items.push({ c: jetFuel / JET_FUEL_MAX < 0.25 ? "#FF6B6B" : "#FFB300",
+                 label: "JET", frac: jetFuel / JET_FUEL_MAX });
   }
 
   let y = H - 26 - (items.length - 1) * 34;
@@ -4780,7 +5472,10 @@ function drawGameOver(meters) {
   outlinedText("BEST COMBO", W / 2 + 130, 254, "bold 15px 'Trebuchet MS', sans-serif", "#9FB6C9", "center", 3);
 
   // --- Missions: the real hook. Showing "18/20" is what starts the next run.
-  outlinedText("MISSIONS", W / 2, 300, "bold 20px 'Trebuchet MS', sans-serif", "#FFE066", "center");
+  // Finished missions are re-rolled during the run, so the three shown are
+  // the live ones; the count says how many the run actually cleared.
+  outlinedText("MISSIONS" + (stats.runMissions ? "  ·  " + stats.runMissions + " done" : ""),
+               W / 2, 300, "bold 20px 'Trebuchet MS', sans-serif", "#FFE066", "center");
   let my = 330;
   for (const m of missions) {
     const prog = Math.min(m.target, Math.floor(missionProgress(m)));
@@ -4913,6 +5608,7 @@ function update(dt) {
   updatePowers();
   updatePet();
   updateCrumbling();
+  updateTurrets();
   scrollWorld();
   recycleWorld();
   checkCollisions();
@@ -4930,7 +5626,7 @@ function update(dt) {
     distance += scrollSpeed;
     score += scrollSpeed * 0.1 * stageDef().mult;   // distance component
     stats.runMeters = Math.floor(distance / 10);
-    scrollSpeed = targetSpeed();
+    scrollSpeed = frameSpeed();
     // Heartbeat: even if some mutation path forgot to persist, at most one
     // second of change is ever at risk. persist() itself skips unchanged
     // bodies, so this costs nothing when there is nothing new.
@@ -4969,10 +5665,12 @@ function render() {
   drawPortals();
   drawSprings();
   drawWires();
+  drawTurrets();
   drawSpikes();
   drawPet();
   drawPlayer();
   drawForeground();
+  drawSecrets();
   drawParticles();
   drawSpeedLines();
   drawPopups();
@@ -5077,6 +5775,8 @@ function restart() {
   wires = []; stunTimer = 0;
   springs = []; springArc = false;
   portals = [];
+  turrets = []; bullets = [];
+  secrets = []; flightJumps = 0;
   shownLevel = 0;
   bannerQueue = []; banner = null;
   stage = 0; cores = []; evolveFlash = 0; coresEarned = 0;
@@ -5088,6 +5788,10 @@ function restart() {
   if (equipped("rocket").id === "turbo" || equipped("rocket").id === "cape") stage = 1;
   flightMeter = FLIGHT_FRAMES; suitBurned = false; flying = false;
   cubUsed = false; petCoinBonus = 0; heroFuel = HERO_FLIGHT_MAX;
+  jetFuel = JET_FUEL_MAX; jetSpeedMod = 1; endDrag();
+  keyDive = keyBoost = keyBrake = false;
+  web = { active: false, ax: 0, ay: 0, len: 0, vx: 0, vy: 0 };
+  webCooldown = 0; swingCarry = 0; websLeft = WEB_MAX;
   runBanked = 0; runSpent = 0; walletCarry = 0;
   balloonCoins = 0; balloonsPopped = 0;
   petX = PLAYER_X - 46; petY = player.y - 26;

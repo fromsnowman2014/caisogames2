@@ -146,7 +146,9 @@ console.log('\nEvolution (변신):');
 
     // a completed mission drops a reachable core ahead of the player
     restart(); started = true; cores.length = 0;
-    missions[0].target = 1; stats[missions[0].key] = 99; checkMissions();
+    // (the all-time coin mission reads save.totalCoins, so both are primed -
+    //  this line was a 1-in-7 flake before)
+    missions[0].target = 1; stats[missions[0].key] = 99; save.totalCoins = 99; checkMissions();
     o.missionDropsCoreAhead = cores.length === 1 && cores[0].x > PLAYER_X;
 
     // missing it must not destroy the reward
@@ -189,10 +191,35 @@ console.log('\nGap reachability vs measured physics:');
       }
       return f * speed;
     }
+    // SPIDER has no air jumps: its reach is ONE web swing, replayed on the
+    // real functions (jump, web at the apex, swing, auto-release, land).
+    function swingOnce() {
+      restart(); started = true; platforms.length = 0;
+      platforms.push({ x: -200, y: GROUND_Y, width: 100000, type: 'ground', fake: false,
+                       crumble: false, crumbleTimer: -1, fallen: false, tufts: [] });
+      stage = STAGES.length - 1; distance = 0; scrollSpeed = 8;
+      const base = targetSpeed();
+      player.y = GROUND_Y - PLAYER_H; player.grounded = true; player.velocityY = 0;
+      jumpHeld = true; jumpBuffer = BUFFER_FRAMES;
+      let dist = 0, webs = 0, wasOn = false;
+      for (let f = 0; f < 900; f++) {
+        updatePlayer(); const s = scrollSpeed; scrollWorld(); checkCollisions(); tryJump();
+        if (web.active && !wasOn) webs++;
+        wasOn = web.active;
+        if (webs >= 1 && !web.active) jumpHeld = false;
+        dist += s;
+        scrollSpeed = frameSpeed();
+        if (player.grounded && f > 5) break;
+      }
+      // normalise to the 8px/frame the other rows use
+      return dist * (8 / base);
+    }
     const out = [];
     for (let st = 0; st < STAGES.length; st++) {
+      const real = STAGES[st].name === 'SPIDER'
+        ? swingOnce()
+        : (stage = st, simulate(STAGES[st].airJumps, STAGES[st].glide, 8));
       stage = st; scrollSpeed = 8; distance = 0;
-      const real = simulate(STAGES[st].airJumps, STAGES[st].glide, 8);
       const hardest = gapRange()[1];
       out.push({ name: STAGES[st].name, real: Math.round(real),
                  hardest: Math.round(hardest), ratio: +(hardest / real).toFixed(2) });
@@ -944,12 +971,15 @@ console.log('\nHERO evolution:');
     const o = {};
     const toHero = () => { restart(); started = true; evolve(); evolve(); evolve(); };
 
-    o.thereAreFourStages = STAGES.length === 4 && STAGES[3].name === 'HERO';
+    o.thereAreSixStages = STAGES.length === 6 && STAGES[3].name === 'HERO' &&
+                          STAGES[4].name === 'JET' && STAGES[5].name === 'SPIDER';
     restart(); started = true; evolve(); evolve();
     cores.length = 0; spawnEvolutionCore();
     o.aThirdCoreIsOfferedAfterBlaze = cores.length === 1;
     evolve(); cores.length = 0; spawnEvolutionCore();
-    o.nothingIsOfferedBeyondHero = cores.length === 0;
+    o.aFourthCoreIsOfferedAfterHero = cores.length === 1;
+    evolve(); evolve(); cores.length = 0; spawnEvolutionCore();
+    o.nothingIsOfferedBeyondSpider = cores.length === 0;
 
     toHero();
     o.heroHasFourJumps = 1 + maxAirJumps() === 4;
@@ -980,7 +1010,9 @@ console.log('\nHERO evolution:');
     restart(); started = true;
     o.theSuitStillFliesFromSecondOne = hasSuit() && stage === 1;
     o.theSuitsBudgetIsFarBigger = FLIGHT_FRAMES > HERO_FLIGHT_MAX * 3;
-    restart(); started = true; evolve(); evolve(); evolve();
+    // the suit starts the run at WINGED, and there are forms above HERO now,
+    // so evolve BY NAME rather than by count
+    restart(); started = true; while (stageDef().name !== 'HERO') evolve();
     const f0 = flightMeter, h0 = heroFuel;
     player.grounded = false; jumpHeld = true;
     for (let i = 0; i < 30; i++) updatePlayer();
@@ -1247,10 +1279,17 @@ console.log('\nPortals:');
     const o = {};
     distance = 3000 * 5; o.noPortalsBeforeSeven = portalChance() === 0;
     distance = 3000 * 6; o.portalsFromSeven = portalChance() > 0;
-    restart(); distance = 3000 * 8; portals.length = 0;
-    portals.push({ inX: 700, inY: GROUND_Y - 30, outX: null, outY: 0, used: false, spin: 0 });
-    recycleWorld();
-    const pt = portals[0];
+    // Generation is random and an exit needs a wide, real slab in its window;
+    // a portal that finds none stays inert by design (checked below), so the
+    // resolution itself is given a few worlds to happen in.
+    let pt;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      restart(); distance = 3000 * 8; portals.length = 0;
+      portals.push({ inX: 700, inY: GROUND_Y - 30, outX: null, outY: 0, used: false, spin: 0 });
+      recycleWorld();
+      pt = portals[0];
+      if (pt.outX !== null) break;
+    }
     const under = pt.outX !== null && platforms.find(q => !q.fake && !q.crumble && pt.outX >= q.x && pt.outX <= q.x + q.width);
     o.theExitResolvesAboveARealPlatform = !!under && pt.outY === under.y - 96;
     o.theExitIsVisibleBeforeTheEntry = pt.outX !== null && pt.outX > pt.inX + WARP_MIN - 1;
@@ -1355,6 +1394,340 @@ console.log('\nPause:');
     o.theButtonIsInTheTopRightCorner = at(W - 36, 27);
     restart(); render();
     o.noButtonBeforeTheRunStarts = !at(W - 36, 27);
+    return o;
+  });
+  for (const [k, v] of Object.entries(e)) ok(v === true, k);
+  await browser.close();
+}
+
+// 25. TURRETS (level 8). A cannon that rises, fires one knee-high shot, and
+//     sinks. Only the shell hurts; the cue is the pop; any jump clears it.
+console.log('\nTurrets:');
+{
+  const { browser, page } = await open(webkit, TARGETS[0].ctx);
+  const e = await page.evaluate(() => {
+    const o = {};
+    distance = 3000 * 6; o.noTurretsBeforeEight = turretChance() === 0;
+    distance = 3000 * 7; o.turretsFromEight = turretChance() > 0;
+    const flat = () => { platforms.length = 0;
+      platforms.push({ x: -200, y: GROUND_Y, width: 3000, type: 'ground', fake: false,
+                       crumble: false, crumbleTimer: -1, fallen: false, tufts: [] }); };
+    const put = (ahead) => { turrets.length = 0; bullets.length = 0;
+      turrets.push({ x: PLAYER_X + ahead, y: GROUND_Y, state: 'hidden', t: 0 }); return turrets[0]; };
+
+    restart(); started = true; flat(); scrollSpeed = 10; distance = 3000 * 8;
+    let tu = put(TURRET_RANGE + 200);
+    updateTurrets(); o.hiddenOutOfRange = tu.state === 'hidden';
+    tu.x = PLAYER_X + TURRET_RANGE - 5;
+    updateTurrets(); o.popsInRange = tu.state === 'rising';
+    let shots = 0;
+    for (let i = 0; i < 200; i++) { const n = bullets.length; updateTurrets(); scrollWorld(); if (bullets.length > n) shots++; }
+    o.firesExactlyOnce = shots === 1;
+    o.sinksAfterwards = tu.state === 'done';
+
+    // reaction window from the pop to impact, at top speed
+    restart(); started = true; flat(); scrollSpeed = MAX_SPEED; distance = 3000 * 8;
+    tu = put(TURRET_RANGE - 1);
+    let hitFrame = -1;
+    for (let i = 0; i < 200 && hitFrame < 0; i++) {
+      updateTurrets(); scrollWorld();
+      for (const q of bullets) if (q.x + BULLET_R > PLAYER_X && q.x - BULLET_R < PLAYER_X + PLAYER_W) hitFrame = i + 1;
+    }
+    o.reactionWindowIsHumane = hitFrame >= 30;
+
+    restart(); started = true; flat(); distance = 3000 * 8;
+    bullets.length = 0; bullets.push({ x: PLAYER_X + 20, y: GROUND_Y - 22, vx: -5, flash: 0 });
+    const l0 = lives; checkCollisions();
+    o.standingRunnerIsShot = lives === l0 - 1 && lifePauseCause === 'shot';
+    restart(); started = true; flat(); power.shield = 1;
+    bullets.length = 0; bullets.push({ x: PLAYER_X + 20, y: GROUND_Y - 22, vx: -5, flash: 0 });
+    const l1 = lives; checkCollisions();
+    o.shieldBlocksTheShot = lives === l1 && power.shield === 0;
+    restart(); started = true; flat();
+    bullets.length = 0; bullets.push({ x: PLAYER_X + 20, y: GROUND_Y - 22, vx: -5, flash: 0 });
+    player.y = GROUND_Y - PLAYER_H - 40; player.grounded = false; player.velocityY = -2;
+    const l2 = lives; checkCollisions();
+    o.aSmallHopClearsIt = lives === l2;
+
+    restart(); distance = 3000 * 9;
+    let placed = 0, inLanding = 0, crowded = 0, onFloating = 0;
+    for (let i = 0; i < 500; i++) {
+      generatePlatform();
+      for (const q of turrets) {
+        placed++;
+        const host = platforms.find(pl => q.x >= pl.x && q.x <= pl.x + pl.width && !pl.fake);
+        if (!host) continue;
+        if (host.type !== 'ground') onFloating++;
+        if (q.x - host.x < LANDING_ZONE) inLanding++;
+        for (const s of spikes)  if (Math.abs(s.x - q.x) < 100) crowded++;
+        for (const w of wires)   if (Math.abs(w.x - q.x) < 100) crowded++;
+        for (const s of springs) if (Math.abs(s.x - q.x) < 100) crowded++;
+      }
+      if (platforms.length > 40) { const cut = platforms[platforms.length - 15].x;
+        platforms = platforms.slice(-15);
+        turrets = turrets.filter(q => q.x > cut); spikes = spikes.filter(q => q.x > cut);
+        wires = wires.filter(q => q.x > cut); springs = springs.filter(q => q.x > cut); }
+    }
+    o.turretsGetPlaced = placed > 15;
+    o.neverOnFloatingSlabs = onFloating === 0;
+    o.neverInTheLandingZone = inLanding === 0;
+    o.neverCrowdOtherHazards = crowded === 0;
+
+    // a revive slides every layer together (wires used to lag behind)
+    restart(); started = true; distance = 3000 * 8;
+    const pl = platforms[platforms.length - 1];
+    wires.length = 0; wires.push({ x: pl.x + 100, y: pl.y, w: 46, hit: false });
+    const off = wires[0].x - pl.x;
+    player.y = H + 200; lives = 3; checkCollisions();
+    o.reviveKeepsWiresOnTheirPlatform = platforms.some(q => Math.abs((wires[0].x - q.x) - off) < 0.01);
+    restart();
+    return o;
+  });
+  for (const [k, v] of Object.entries(e)) ok(v === true, k);
+  await browser.close();
+}
+
+// 26. THE SECRET CLOUD. Almost invisible, at the top, moving at world speed.
+//     Only the THIRD jump of one flight collects it; flying never does.
+console.log('\nSecret cloud:');
+{
+  const { browser, page } = await open(webkit, TARGETS[0].ctx);
+  const e = await page.evaluate(() => {
+    const o = {};
+    restart(); stage = 1; o.noSecretsWithoutAThirdJump = secretChance() === 0;
+    stage = 2; o.secretsOnceYouHaveOne = secretChance() > 0;
+    const flat = () => { platforms.length = 0;
+      platforms.push({ x: -200, y: GROUND_Y, width: 3000, type: 'ground', fake: false,
+                       crumble: false, crumbleTimer: -1, fallen: false, tufts: [] }); };
+    const put = () => { secrets.length = 0; secrets.push({ x: PLAYER_X + PLAYER_W / 2, taken: false, phase: 0 }); return secrets[0]; };
+    const touch = () => { player.y = SECRET_Y - PLAYER_H / 2; player.grounded = false; player.velocityY = -1; checkCollisions(); };
+    const flyUp = (jumpsToUse) => {
+      restart(); started = true; flat(); stage = 2; save.wallet = 0;
+      player.y = GROUND_Y - PLAYER_H; player.grounded = true; player.airJumps = 2;
+      const sc = put();
+      jumpHeld = true; jumpBuffer = BUFFER_FRAMES; tryJump();
+      let used = 1, wasRising = true;
+      for (let f = 0; f < 300; f++) {
+        updatePlayer(); checkCollisions();
+        if (sc.taken) return true;
+        const rising = player.velocityY < 0;
+        if (wasRising && !rising && used < jumpsToUse) { jumpBuffer = BUFFER_FRAMES; coyoteFrames = 0; tryJump(); used++; }
+        wasRising = rising;
+        if (player.grounded && f > 5) break;
+      }
+      return false;
+    };
+    o.aTripleJumpCollectsIt = flyUp(3) === true;
+    o.aDoubleJumpReachesItButDoesNot = flyUp(2) === false;
+    restart(); started = true; flat(); stage = 3; heroFuel = HERO_FLIGHT_MAX;
+    let sc = put(); flightJumps = 3; flying = true; touch();
+    o.flyingIntoItDoesNothing = sc.taken === false;
+    restart(); started = true; flat(); stage = 2;
+    sc = put(); flightJumps = 2; flying = false; touch();
+    o.twoAirJumpsFromALedgeDoNot = sc.taken === false;
+
+    // the tell: it moves at world speed, not cloud speed
+    restart(); started = true; flat(); stage = 2; scrollSpeed = 8;
+    secrets.length = 0; secrets.push({ x: 500, taken: false, phase: 0 });
+    clouds[0].x = 500; scrollWorld();
+    o.itMovesAtWorldSpeedNotCloudSpeed = secrets[0].x === 492 && clouds[0].x > 495;
+
+    // the prize table respects the record gate and never pays score
+    restart(); started = true; flat(); stage = 2;
+    save.wallet = 0; save.best = 0; save.owned = []; lives = 2;
+    const seen = {}; let recordBroken = 0;
+    for (let i = 0; i < 400; i++) {
+      const pr = rollSecretPrize(); seen[pr.id] = (seen[pr.id] || 0) + 1;
+      if (pr.id === 'item' && pr.gift.item.needBest && save.best < pr.gift.item.needBest) recordBroken++;
+    }
+    o.everyPrizeAppears = ['coins', 'hero', 'item', 'jackpot', 'lives'].every(k => seen[k] > 0);
+    o.freeItemsNeverBypassTheRecord = recordBroken === 0;
+    const realRandom = Math.random;
+    Math.random = () => 0.1;
+    restart(); started = true; flat(); stage = 2; save.wallet = 0; const s0 = score;
+    sc = put(); flightJumps = 3; touch();
+    o.coinsPayTheWalletOnly = save.wallet === 300 && score === s0 && runBanked === 300;
+    Math.random = () => 0.5;
+    restart(); started = true; flat(); stage = 2;
+    sc = put(); flightJumps = 3; touch();
+    o.heroPrizeEvolvesToHero = stageDef().name === 'HERO';
+    Math.random = realRandom;
+    restart();
+    return o;
+  });
+  for (const [k, v] of Object.entries(e)) ok(v === true, k);
+  await browser.close();
+}
+
+// 27. JET, the fifth form: drag to fly, a tank that drains only while
+//     thrusting and refills only on the ground, release to fall.
+console.log('\nJET:');
+{
+  const { browser, page } = await open(webkit, TARGETS[0].ctx);
+  const e = await page.evaluate(() => {
+    const o = {};
+    const JET = STAGES.findIndex(s => s.name === 'JET');
+    const flat = () => { platforms.length = 0;
+      platforms.push({ x: -200, y: GROUND_Y, width: 6000, type: 'ground', fake: false,
+                       crumble: false, crumbleTimer: -1, fallen: false, tufts: [] }); };
+    const asJet = () => { restart(); started = true; flat(); stage = JET; jetFuel = JET_FUEL_MAX;
+      player.y = GROUND_Y - PLAYER_H; player.grounded = true; player.velocityY = 0; endDrag(); jumpHeld = false; };
+    const dragTo = (dx, dy) => { drag = { active: true, ox: 100, oy: 100, dx, dy }; };
+
+    asJet(); jumpHeld = true;
+    const y0 = player.y; for (let i = 0; i < 20; i++) { updatePlayer(); checkCollisions(); }
+    o.holdClimbs = player.y < y0 - 40 && flying && jetFuel < JET_FUEL_MAX;
+    asJet(); player.y = 200; player.grounded = false; dragTo(0, 80);
+    const y1 = player.y; for (let i = 0; i < 20; i++) updatePlayer();
+    o.dragDownDives = player.y > y1 + 60;
+    asJet(); player.y = 300; player.grounded = false; dragTo(0, -80);
+    const y2 = player.y; for (let i = 0; i < 20; i++) updatePlayer();
+    o.dragUpClimbs = player.y < y2 - 60;
+    asJet(); player.y = 300; player.grounded = false; dragTo(5, 5); jumpHeld = true;
+    updatePlayer(); o.tinyDragIsJustAHold = thrust().y === -1 && thrust().x === 0;
+
+    asJet(); player.y = 300; player.grounded = false; dragTo(80, 0);
+    for (let i = 0; i < 60; i++) { updatePlayer(); scrollSpeed = targetSpeed(); }
+    const boosted = scrollSpeed;
+    asJet(); player.y = 300; player.grounded = false; dragTo(-80, 0);
+    for (let i = 0; i < 60; i++) { updatePlayer(); scrollSpeed = targetSpeed(); }
+    const braked = scrollSpeed;
+    asJet(); const plain = targetSpeed();
+    o.boostSpeedsTheWorld = boosted > plain * 1.3;
+    o.brakeSlowsTheWorld = braked < plain * 0.8;
+    endDrag(); jumpHeld = false; player.y = 200; player.grounded = false; player.velocityY = 0;
+    for (let i = 0; i < 60; i++) { updatePlayer(); scrollSpeed = targetSpeed(); }
+    o.releaseFallsAndThrottleReturns = player.velocityY > 0 && !flying && Math.abs(scrollSpeed - plain) < 0.05;
+
+    asJet(); player.y = 200; player.grounded = false; dragTo(0, -80);
+    let f = 0; while (flying || f === 0) { updatePlayer(); f++; if (f > 2000) break; }
+    o.tankEmptiesInAboutFiveSeconds = f >= JET_FUEL_MAX && f <= JET_FUEL_MAX + 3;
+    o.emptyTankMeansFalling = jetFuel === 0 && player.velocityY > 0;
+    updatePlayer(); o.noRefillInTheAir = jetFuel === 0;
+    endDrag(); player.y = GROUND_Y - PLAYER_H; player.grounded = true; player.velocityY = 0;
+    for (let i = 0; i < 100; i++) updatePlayer();
+    o.refillsOnTheGround = jetFuel > 60;
+
+    asJet(); player.y = 60; player.grounded = false; dragTo(0, -80);
+    for (let i = 0; i < 60; i++) updatePlayer();
+    o.cannotFlyOffTheTop = player.y >= FLY_CEIL;
+    asJet(); player.y = 300; player.grounded = false; dragTo(0, -80);
+    for (let i = 0; i < 40; i++) updatePlayer();
+    o.flightIsNotHangTime = airFrames === 0;
+    asJet(); player.airJumps = 3; jumpBuffer = 5; jumpHeld = true; tryJump();
+    o.noJumpsWhileTheTankHasFuel = player.airJumps === 3 && jumpBuffer === 0;
+    jetFuel = 0; jumpBuffer = 5; tryJump();
+    o.jumpsReturnWhenTheTankIsDry = player.velocityY < 0;
+    o.gapsNotSizedForFlight = STAGES[JET].reach === STAGES[JET - 1].reach;
+    asJet(); lives = 3; player.y = H + 200; checkCollisions();
+    o.lifeLostDropsToHero = stageDef().name === 'HERO';
+    restart(); started = true; flat(); stage = JET - 1; jetFuel = 0; evolve();
+    o.evolvingToJetFillsTheTank = jetFuel === JET_FUEL_MAX;
+    restart();
+    return o;
+  });
+  for (const [k, v] of Object.entries(e)) ok(v === true, k);
+  await browser.close();
+}
+
+// 28. SPIDER, the summit: hold to jump then swing, release to drop, press
+//     again to web again. Three webs per flight, refilled by landing.
+console.log('\nSPIDER:');
+{
+  const { browser, page } = await open(webkit, TARGETS[0].ctx);
+  const e = await page.evaluate(() => {
+    const o = {};
+    const SP = STAGES.findIndex(s => s.name === 'SPIDER');
+    const flat = () => { platforms.length = 0;
+      platforms.push({ x: -200, y: GROUND_Y, width: 100000, type: 'ground', fake: false,
+                       crumble: false, crumbleTimer: -1, fallen: false, tufts: [] }); };
+    const asSpider = () => { restart(); started = true; flat(); stage = SP; distance = 9000;
+      scrollSpeed = 8; player.y = GROUND_Y - PLAYER_H; player.grounded = true; player.velocityY = 0; };
+    const flight = (websWanted) => {
+      asSpider();
+      const base = targetSpeed();
+      jumpHeld = true; jumpBuffer = BUFFER_FRAMES;
+      let dist = 0, f = 0, webs = 0, minVx = Infinity, maxVx = 0, top = player.y, wasOn = false;
+      for (; f < 900; f++) {
+        updatePlayer(); const s = scrollSpeed; scrollWorld(); checkCollisions(); tryJump();
+        if (web.active && !wasOn) webs++;
+        wasOn = web.active;
+        if (web.active) { if (s < minVx) minVx = s; if (s > maxVx) maxVx = s; }
+        if (webs >= websWanted && !web.active) jumpHeld = false;
+        dist += s; if (player.y < top) top = player.y;
+        scrollSpeed = frameSpeed();
+        if (player.grounded && f > 5) break;
+        if (player.y > H) break;
+      }
+      return { dist, webs, minVx, maxVx, top, base, landed: player.grounded };
+    };
+    const one = flight(1), two = flight(2), held = flight(99);
+    o.aHeldJumpFiresAWebAtTheApex = one.webs === 1;
+    o.theSwingNeverScrollsBackward = one.minVx >= 0;
+    o.theSwingSpeedsTheWorldUp = one.maxVx > one.base * 1.5;
+    o.theSwingStaysUnderTheCeiling = one.top >= FLY_CEIL;
+    o.oneSwingOutreachesHero = one.dist > 35 * one.base * STAGES[SP - 1].reach;
+    o.aSecondWebGoesFurther = two.webs === 2 && two.dist > one.dist;
+    o.aHeldButtonCannotSwingForever = held.webs === WEB_MAX && held.landed;
+
+    asSpider(); player.y = 300; player.grounded = false; player.velocityY = 2;
+    jumpBuffer = 5; jumpHeld = true; coyoteFrames = 0; tryJump();
+    o.aPressInTheAirFiresAWeb = web.active === true;
+    for (let i = 0; i < 12; i++) { updatePlayer(); scrollSpeed = frameSpeed(); }
+    releaseJump();
+    o.releaseDetachesAndCarriesSpeed = web.active === false && frameSpeed() > targetSpeed();
+    updatePlayer(); o.thenGravityResumes = player.velocityY !== 0;
+
+    asSpider(); player.y = 300; player.grounded = false; jumpBuffer = 5; jumpHeld = true; tryJump();
+    player.y = GROUND_Y - PLAYER_H; player.velocityY = 3; checkCollisions();
+    o.landingEndsTheSwingAndRefillsWebs = web.active === false && player.grounded && websLeft === WEB_MAX;
+    asSpider(); player.y = 300; player.grounded = false; jumpBuffer = 5; jumpHeld = true; tryJump();
+    lives = 3; player.y = H + 200; checkCollisions();
+    o.aLostLifeClearsTheWebAndDropsToJet = web.active === false && stageDef().name === 'JET';
+    asSpider(); jumpBuffer = 5; jumpHeld = false; tryJump();
+    o.groundJumpStillJumps = player.velocityY < 0 && web.active === false;
+    o.noAirJumpsNoWings = maxAirJumps() === 0;
+    restart(); started = true; flat(); stage = 2; player.y = 300; player.grounded = false; player.airJumps = 2;
+    jumpBuffer = 5; jumpHeld = true; coyoteFrames = 0; tryJump();
+    o.otherFormsStillAirJump = player.velocityY < 0 && web.active === false;
+    restart();
+    return o;
+  });
+  for (const [k, v] of Object.entries(e)) ok(v === true, k);
+  await browser.close();
+}
+
+// 29. MISSIONS RE-ROLL. Three missions capped the ladder at HERO; with six
+//     forms a finished mission is replaced so the climb can continue.
+console.log('\nMissions re-roll:');
+{
+  const { browser, page } = await open(webkit, TARGETS[0].ctx);
+  const e = await page.evaluate(() => {
+    const o = {};
+    restart(); started = true;
+    const first = missions.map(m => m.id);
+    // finish the first mission by force
+    const m0 = missions[0];
+    if (m0.key === 'totalCoins') save.totalCoins = m0.target; else stats[m0.key] = m0.target;
+    checkMissions();
+    o.threeMissionsStayLive = missions.length === 3;
+    o.theFinishedOneWasReplaced = missions[0].id !== first[0] || missions[0].done === false;
+    o.theReplacementIsNotAlreadyDone = missions.every(m => m.done || missionProgress(m) < m.target);
+    o.aCoreWasDropped = cores.length === 1;
+    o.theRunCountsIt = stats.runMissions === 1;
+    o.noDuplicateLiveMissions = new Set(missions.filter(m => !m.done).map(m => m.id)).size ===
+                                missions.filter(m => !m.done).length;
+
+    // five cores in one run is now possible
+    restart(); started = true;
+    let cores5 = 0;
+    for (let round = 0; round < 12 && cores5 < 5; round++) {
+      const m = missions.find(q => !q.done); if (!m) break;
+      if (m.key === 'totalCoins') save.totalCoins = m.target + save.totalCoins; else stats[m.key] = m.target;
+      const before = cores.length; checkMissions(); cores5 += cores.length - before;
+    }
+    o.fiveCoresAreReachableInOneRun = cores5 >= 5;
+    restart();
     return o;
   });
   for (const [k, v] of Object.entries(e)) ok(v === true, k);

@@ -1,7 +1,7 @@
 {
   "id": "endless-runner",
   "name": "Turbo Dash",
-  "version": "8.2.0",
+  "version": "9.0.0",
   "description": "A colorful endless runner platformer across ten named difficulty levels. Jump tripwires, ride springs, read portals, dodge crumbling and fake platforms, evolve mid-run, pop coin balloons, keep a pet, and chase a live shared leaderboard.",
   "author": "CaisoGames AI Team",
   "genre": "Endless Runner Platformer",
@@ -68,6 +68,11 @@
     "Coins are banked the moment they are collected, so abandoning a run mid-way (app switch, closed tab) loses nothing",
     "A storage self-test at boot; if saving is blocked the title screen says so instead of failing silently",
     "Losing a life freezes the run on a LIFE LOST screen until a tap, with CONTINUE and SHOP offered there",
+    "Turrets (level 8+): a hatch that rises into a cannon, fires ONE knee-high shot back down the track, and sinks; only the shell hurts, and any jump clears it",
+    "The secret cloud: a near-transparent cloud along the top of the world, moving at WORLD speed rather than cloud speed, collected only on the third jump of one flight; pays coins, an instant HERO form, a free (record-eligible) shop item, or every life back",
+    "Fifth evolution JET: drag to fly - climb, dive, boost or brake - on a five-second tank that refills only on the ground, with jet flames and a gauge beside the character",
+    "Sixth evolution SPIDER: hold to jump then web-swing, release to drop with the swing's speed, press again to web again; three webs per flight, refilled by landing, and the web lets go by itself before it could swing you backward",
+    "Finished missions are re-rolled during the run, so there are always three live goals and the five cores to SPIDER are reachable",
     "Every change is written to storage at once - no throttle, no unsaved window",
     "Two on-disk copies: the previous state is rotated to a backup before each write, and a corrupt primary is recovered from it and repaired on the spot",
     "Writes fire on pagehide, beforeunload, blur, freeze and visibilitychange, plus a 1s heartbeat while playing",
@@ -171,13 +176,13 @@
       },
       {
         "n": 8,
-        "name": "FAST LANE",
-        "adds": "Tighter gaps, narrower platforms"
+        "name": "TURRET ROW",
+        "adds": "Turrets - jump the shot"
       },
       {
         "n": 9,
         "name": "GAUNTLET",
-        "adds": "Everything, faster"
+        "adds": "Tighter gaps, everything faster"
       },
       {
         "n": 10,
@@ -282,7 +287,7 @@
       "pause freezes the world, refuses where there is nothing to pause, and returns from menus to itself",
       "a restart always begins on the play screen, never under a stale overlay"
     ],
-    "checks": 235
+    "checks": 304
   },
   "progression": {
     "type": "in-run evolution",
@@ -313,9 +318,29 @@
         "grants": "Four jumps + rechargeable flight burst",
         "scoreMultiplier": 2.0,
         "earnedBy": "Complete a third mission in the same run, then collect the Core"
+      },
+      {
+        "stage": 5,
+        "name": "JET",
+        "grants": "Drag to fly: climb, dive, boost (+45% scroll) or brake (-30%). 5s tank, refills only on the ground. Jumps return when the tank is dry.",
+        "scoreMultiplier": 2.4,
+        "earnedBy": "A fourth mission in the same run (missions re-roll), then the Core",
+        "control": "Touch: drag from wherever the finger went down; a held tap without movement climbs. Keyboard: hold to climb, DOWN/S dive, RIGHT/D boost, LEFT/A brake.",
+        "gaps": "Sized for HERO's jumps, never for flight - an empty tank is never a death sentence."
+      },
+      {
+        "stage": 6,
+        "name": "SPIDER",
+        "grants": "Hold to jump, keep holding and a web fires at the apex to a point 150px ahead and 170px up; swing under it. Release to drop with the swing's momentum. Press again in the air for another web. Three webs per flight, refilled by landing. No air jumps.",
+        "scoreMultiplier": 2.8,
+        "earnedBy": "A fifth mission in the same run, then the Core",
+        "physics": "A real pendulum in world space, position-based; its horizontal velocity IS the scroll for that frame, so the world rushes past at the bottom of the swing. The web lets go by itself the instant the swing would carry you backward.",
+        "measured": "One swing = 3.25x RUNNER's reach at the same speed; two chained = 4.92x; three = 6.56x. Gaps use 2.95 (HERO's), so a single swing clears the hardest gap with ~10% to spare.",
+        "whyABudget": "Without the three-web cap a held button chained swings along the ceiling forever. Every flying form here keeps the rule that hovering forever is impossible by construction."
       }
     ],
-    "note": "Evolution is per-run and resets on death. Reaching HERO means completing all three missions in a single run. Mission tiers persist, so cores get harder to earn over time."
+    "note": "Evolution is per-run and resets on death. Missions are re-rolled as they finish, so the climb to SPIDER takes five missions in one run. Mission tiers persist, so cores get harder to earn over time.",
+    "naming": "The two new forms are deliberately named JET and SPIDER rather than after any trademarked character: the game is published publicly. The mechanics - drag flight with a fuel bar, web swinging - are the part that was asked for and they are all here."
   },
   "shop": {
     "currency": "Coins collected while running, banked into a wallet at the end of each run",
@@ -455,6 +480,22 @@
     "balanceRule": "Balloon coins pay the WALLET and never the SCORE, exactly like the Crown and the Pup. The Crown's +25% applies. Counted apart from stats.runCoins so a lucky balloon cannot finish a 'collect ten coins' mission.",
     "whyFasterCoinsAreSafe": "Leaderboard position is protected by needBest - a distance RECORD - not by price. Price gates patience; records gate skill. Making coins flow faster speeds up the shop without weakening the thing the economy exists to protect.",
     "measuredIncome": "Per run, assuming every coin is caught: 1000m ~118, 3000m ~286, 6000m ~648. At the ~40% catch rate a real 6000m run showed, that is roughly 4x the old income - and the old figure was before the merchant took 60 per balloon back out."
+  },
+  "turret": {
+    "level": 8,
+    "range": "Pops when the player is within 500px; hatch light blinks red from 800px",
+    "timing": "18 frames to rise (the cue), one shot, 8 frames up, 18 to sink. From the pop to impact at top speed: 32 frames (~0.53s at 10px/frame, ~0.6s at typical speeds).",
+    "shot": "Knee height, 5.5px/frame on top of the scroll. Any jump clears it; a shield absorbs it; hitting it costs a life like a spike.",
+    "placement": "Ground platforms only, past the landing zone, 110px clear of spikes, wires and springs. Never on floating slabs.",
+    "whyOnlyTheShellHurts": "A solid block rising out of the floor under a committed jump would be an unreadable death. The cannon body is scenery; it has usually sunk again by the time you reach it.",
+    "alsoFixed": "A revive slid platforms, coins, spikes, pickups and cores forward but left wires, springs and portals behind, so a revive could put a tripwire in mid-air. Every layer moves together now."
+  },
+  "secretCloud": {
+    "where": "y=44, the summit of the world. Spawns 2.2% per platform once the player has a third jump (BLAZE+), one at a time.",
+    "tell": "It scrolls at world speed (1.0x) while real clouds drift at 0.2x. Alpha 0.18-0.34 in the biome's cloud colour, no glow, no outline, no bob. Nobody is told; it can only be noticed.",
+    "whyTheThirdJump": "A held double jump already reaches the ceiling (measured: player top 26px vs ceiling 18px), so height gates nothing. Counting jumps in one flight - ground + 2 air = 3 - makes it a move you have to know, and a flying form cannot stumble into it.",
+    "prizes": "coins 300 (w40), instant HERO (w22), a free shop item the player's RECORD already qualifies them for (w22), 1000 coins (w8), all lives (w8). Coins are wallet-only. HERO is per-run. Fallbacks to coins when a prize would be useless.",
+    "whyNot6000Coins": "6000 is ~40% of the whole shop in one touch, and a good BLAZE run meets several clouds. 300/1000 keep it a jackpot without collapsing the economy; the free item and the instant HERO are the prizes that feel big."
   },
   "walletLedger": {
     "invariant": "walletBefore + runWalletGain - runWalletSpent === walletAfter, asserted at finishRun",
