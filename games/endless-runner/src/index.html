@@ -172,22 +172,13 @@
   #nameOk     { background: #50FA7B; color: #0B1622; }
   #nameCancel { background: #3b5064; color: #e8f1f8; }
   #nameHint   { margin: 12px 0 0; font-size: 12px; color: #8ea6b8; }
-  #hint {
-    text-align: center;
-    color: #9fb6c9;
-    font-size: 13px;
-    margin-top: 8px;
-    letter-spacing: 0.5px;
-    padding: 0 10px;
-  }
-  /* On short/landscape phone screens the hint just steals room from the game. */
-  @media (max-height: 480px) { #hint { display: none; } }
+  /* Everything a player needs to know is drawn on the canvas itself, so the
+     game can own the whole screen: no caption row, no margins. */
 </style>
 </head>
 <body>
 <div id="wrap">
   <canvas id="game" width="800" height="600"></canvas>
-  <div id="hint">SPACE / UP / W or TAP to jump &mdash; hold longer to jump higher</div>
 </div>
 <div id="boot">
   <h1>TURBO DASH</h1>
@@ -300,8 +291,32 @@
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 
-const W = canvas.width;    // 800
-const H = canvas.height;   // 600
+/* --- The viewport ------------------------------------------------------------
+   The WORLD is 600 logical pixels tall and that never changes: the ground is
+   at 450, the ceiling at 18, and every jump, reach and gap in this file was
+   measured against those numbers. What changes is how much of the screen the
+   world is allowed to fill.
+
+   LANDSCAPE: height 600, width follows the screen's aspect (800..1400). A
+   wider phone simply sees further down the track - the generator already
+   builds to W + 200, so there is always ground to see.
+
+   PORTRAIT: width 600, height follows the aspect. The world is anchored with
+   the ground at 60% of the screen (camY), sky continuing above it and earth
+   below. Width 600 rather than 800 is deliberate: on the same phone it makes
+   the character the SAME size in both orientations, at the cost of 450px of
+   look-ahead instead of 650 - 0.75s at top speed, 1.5s at the start.
+
+   The HUD is drawn in screen space and pins to the real edges. Menus are laid
+   out in a fixed 800x600 "UI space" (withUiSpace) scaled to fit, so one
+   layout serves every screen.
+   -------------------------------------------------------------------------- */
+const WORLD_H = 600;       // the world's height; never changes
+let W = 800;               // logical canvas width, set by resizeCanvas
+let H = 600;               // logical canvas height
+let camY = 0;              // where the world's y=0 sits on the canvas
+let dpr = 1;               // backing-store scale, for crisp text on phones
+let portrait = false;
 
 // --- Physics ---
 // Gravity is asymmetric: lighter on the way up, heavier on the way down. That
@@ -492,16 +507,42 @@ function tryJump() {
 
 /* --- Keyboard ------------------------------------------------------------ */
 
-window.addEventListener("keydown", e => {
-  if (e.code === "Escape") {
-    if (uiScreen === "shop" || uiScreen === "board") { closeMenu(); return; }
-    if (uiScreen === "paused") { closePause(); return; }
+/* --- Menu shortcuts (desktop) ---------------------------------------------
+   Every menu button has a key, and the button shows it (uiBtn's chip), so a
+   keyboard player never has to reach for the mouse: S shop, L leaderboard,
+   N name, E end run, ESC back/pause, SPACE or ENTER to go. S is also JET's
+   dive key, so it only means "shop" when there is no run to dive in.
+   ---------------------------------------------------------------------- */
+function menuShortcut(code) {
+  const stopped = !started || gameOver || lifePause;    // no run to steer
+  if (code === "Escape") {
+    if (uiScreen === "shop" || uiScreen === "board") { closeMenu(); return true; }
+    if (uiScreen === "paused") { closePause(); return true; }
     openPause();
-    return;
+    return true;
   }
+  const canOpen = uiScreen === "paused" || (uiScreen === "play" && stopped);
+  if (code === "KeyS" && canOpen) { openShop();  return true; }
+  if (code === "KeyL" && canOpen) { openBoard(); return true; }
+  if (code === "KeyN" && uiScreen === "board") { openNameModal(); return true; }
+  if (code === "KeyE" && uiScreen === "paused" && resumeLock <= 0) {
+    uiScreen = "play"; menuFrom = "play"; lives = 1; die(lifePauseCause || "fall");
+    return true;
+  }
+  if (code === "Enter" || code === "NumpadEnter") {
+    if (uiScreen === "paused") { closePause(); return true; }
+    if (uiScreen === "play" && lifePause) { resumeFromLifePause(); return true; }
+    if (uiScreen === "play" && (gameOver || !started)) { pressJump(); releaseJump(); return true; }
+  }
+  return false;
+}
+
+window.addEventListener("keydown", e => {
   // Bail BEFORE preventDefault: W and SPACE are jump keys but also ordinary
   // characters, and swallowing them here made them untypable in the name box.
-  if (nameModalOpen || uiScreen !== "play") return;
+  if (nameModalOpen) return;
+  if (menuShortcut(e.code)) { e.preventDefault(); unlockAudio(); return; }
+  if (uiScreen !== "play") return;
   // Steering keys for the flying forms. Harmless in every other form.
   if (e.code === "ArrowDown"  || e.code === "KeyS") { e.preventDefault(); keyDive  = true; return; }
   if (e.code === "ArrowRight" || e.code === "KeyD") { e.preventDefault(); keyBoost = true; return; }
@@ -659,8 +700,9 @@ document.addEventListener("mousedown", e => {
   pressJump();
 });
 document.addEventListener("mousemove", e => {
-  if (usingTouch || !mouseHeld) return;
-  moveDrag(e.clientX, e.clientY);
+  if (usingTouch) return;
+  hoverPt = canvasPoint(e.clientX, e.clientY);
+  if (mouseHeld) moveDrag(e.clientX, e.clientY);
 });
 document.addEventListener("mouseup", e => {
   if (onHtmlUi(e.target)) return;
@@ -669,14 +711,34 @@ document.addEventListener("mouseup", e => {
 });
 
 /* --- Responsive canvas ---------------------------------------------------
-   The game always renders at a fixed 800x600 internally, so no gameplay code
-   ever has to think about screen size. We just letterbox that fixed surface
-   into the largest 4:3 rectangle that fits the viewport.
+   Fill the screen in EITHER orientation. See the viewport note at the top:
+   the world's height is fixed, the canvas's logical size follows the screen,
+   and the world is anchored inside it. The game used to letterbox a fixed
+   800x600 box, which on a phone in landscape was a 390x292 window in the
+   middle of an 844x390 screen, and in portrait a small box with a "rotate
+   your device" nag under it. Both are gone: the canvas IS the screen.
    ---------------------------------------------------------------------- */
+
+const LAND_MIN_W = 800, LAND_MAX_W = 1400;
+const PORT_W = 600, PORT_MAX_H = 1500;
+// Portrait: the ground sits this far down the screen. 0.70 rather than the
+// obvious 0.60 because the world's ceiling is 432px above the ground: at
+// 0.60 the play zone crowded the top and 40% of a tall phone was earth.
+const GROUND_ANCHOR = 0.70;
+
+function layoutFor(availW, availH) {
+  const aspect = availW / availH;
+  if (!isFinite(aspect) || aspect <= 0) return null;
+  if (aspect >= 1) {
+    return { W: Math.max(LAND_MIN_W, Math.min(LAND_MAX_W, Math.round(WORLD_H * aspect))),
+             H: WORLD_H, camY: 0, portrait: false };
+  }
+  const h = Math.max(WORLD_H, Math.min(PORT_MAX_H, Math.round(PORT_W / aspect)));
+  return { W: PORT_W, H: h, camY: Math.round(h * GROUND_ANCHOR - GROUND_Y), portrait: true };
+}
 
 function resizeCanvas() {
   const wrap = document.getElementById("wrap");
-  const hint = document.getElementById("hint");
   if (!wrap) return;
 
   const style = getComputedStyle(wrap);
@@ -687,47 +749,74 @@ function resizeCanvas() {
   const padX = num(style.paddingLeft) + num(style.paddingRight);
   const padY = num(style.paddingTop) + num(style.paddingBottom);
 
-  // Decide what the hint says (and whether it shows) BEFORE measuring it,
-  // otherwise we size the canvas against a stale hint height.
-  const portraitPhone = window.innerHeight > window.innerWidth && window.innerWidth < 620;
-  if (hint) {
-    if (portraitPhone) {
-      hint.textContent = "↻ Rotate your device for a bigger view";
-      hint.style.display = "block";
-    } else {
-      hint.textContent = isTouch()
-        ? "TAP to jump — hold longer to jump higher"
-        : "SPACE / UP / W or TAP to jump — hold longer to jump higher";
-      hint.style.display = "";
-    }
-  }
-
   // Fall back to the viewport if the container reports nothing useful. iOS
   // Safari can report a zero-height container on the very first layout pass,
   // while its toolbar is still settling.
   const boxW = wrap.clientWidth  || window.innerWidth  || 800;
   const boxH = wrap.clientHeight || window.innerHeight || 600;
+  const availW = boxW - padX, availH = boxH - padY;
 
-  const availW = boxW - padX;
-  const hintH = hint && hint.offsetParent !== null ? hint.offsetHeight + 8 : 0;
-  const availH = boxH - padY - hintH;
+  const lay = layoutFor(availW, availH);
+  if (!lay) return;
+  W = lay.W; H = lay.H; camY = lay.camY; portrait = lay.portrait;
 
-  let scale = Math.min(availW / W, availH / H);
+  const scale = Math.min(availW / W, availH / H);
   // A non-finite or non-positive scale would produce an invalid CSS length,
   // which the browser silently discards - leaving a blank screen. Refuse to
   // emit one; keep the CSS fallback sizing instead.
   if (!isFinite(scale) || scale <= 0) return;
 
+  // Backing store at device resolution (capped at 2x - beyond that is memory
+  // for no visible gain). Every frame resets the transform to dpr, so the
+  // rest of the file keeps drawing in logical pixels.
+  dpr = Math.min(2, window.devicePixelRatio || 1);
+  canvas.width  = Math.round(W * dpr);
+  canvas.height = Math.round(H * dpr);
+
   canvas.style.width  = Math.max(1, Math.floor(W * scale)) + "px";
   canvas.style.height = Math.max(1, Math.floor(H * scale)) + "px";
   canvas.style.maxWidth = "none";     // release the CSS fallback constraints
   canvas.style.maxHeight = "none";
-  // Rounded corners look wrong once the game fills a phone screen edge to edge.
-  canvas.style.borderRadius = scale < 0.75 ? "0" : "10px";
+  canvas.style.borderRadius = "0";
+  // Resizing the backing store wipes the canvas; paint at once so a rotation
+  // never shows a blank frame.
+  if (typeof player !== "undefined" && player) { try { render(); } catch (e) {} }
 }
 
 window.addEventListener("resize", resizeCanvas);
 window.addEventListener("orientationchange", () => setTimeout(resizeCanvas, 120));
+
+/* --- UI space ----------------------------------------------------------------
+   Menus and overlays are laid out once, for 800x600, and drawn through this:
+   scaled uniformly to fit the canvas and centred. In landscape that is scale
+   1; in portrait 0.75. Buttons registered inside remember the transform so
+   taps are mapped back through it.
+   -------------------------------------------------------------------------- */
+
+const UI_W = 800, UI_H = 600;
+let uiSpace = null;   // { k, ox, oy } while inside withUiSpace, else null
+
+function withUiSpace(fn) {
+  const k = Math.min(W / UI_W, H / UI_H);
+  const ox = (W - UI_W * k) / 2, oy = (H - UI_H * k) / 2;
+  const savedW = W, savedH = H;
+  ctx.save();
+  ctx.translate(ox, oy);
+  ctx.scale(k, k);
+  uiSpace = { k, ox, oy };
+  W = UI_W; H = UI_H;          // overlay code lays out against 800x600
+  try { fn(); } finally {
+    W = savedW; H = savedH;
+    uiSpace = null;
+    ctx.restore();
+  }
+}
+
+/** Fill the entire canvas whatever transform is active (a dim, a backdrop). */
+function fillAll(style) {
+  ctx.fillStyle = style;
+  ctx.fillRect(-6000, -6000, 12000, 12000);
+}
 
 /* --- Pause when the app is backgrounded ----------------------------------
    Without this, taking a phone call means coming back to a dead run. ----- */
@@ -1408,7 +1497,11 @@ const TURRET_RANGE  = 500;   // pops when the player is this close (~0.6s to rea
 const TURRET_RISE   = 18;    // frames to rise - the cue
 const TURRET_HOLD   = 8;     // frames it stays up after firing
 const TURRET_SINK   = 18;    // frames to retract
-const BULLET_SPEED  = 5.5;   // on top of the scroll, so it closes fast
+// 4.5 on top of the scroll. At 5.5 a portrait phone (420px of visible track)
+// at top speed had the shell arriving 29 frames after the pop - under the
+// half-second floor. 4.5 keeps every screen at 33+ frames and it still closes
+// at 14.5px/frame relative, which reads as a bullet, not a balloon.
+const BULLET_SPEED  = 4.5;
 const BULLET_R      = 7;
 
 let turrets;   // { x, y, state, t }  state: hidden | rising | up | sinking | done
@@ -1422,7 +1515,10 @@ function turretChance() {
 function updateTurrets() {
   for (const tu of turrets) {
     if (tu.state === "hidden") {
-      if (tu.x - PLAYER_X < TURRET_RANGE && tu.x > PLAYER_X) { tu.state = "rising"; tu.t = 0; }
+      // Never further than the screen edge: the pop is the cue, and a cue the
+      // player cannot see is not a cue. (Portrait shows less track ahead.)
+      const range = Math.min(TURRET_RANGE, W - PLAYER_X - 30);
+      if (tu.x - PLAYER_X < range && tu.x > PLAYER_X) { tu.state = "rising"; tu.t = 0; }
       continue;
     }
     tu.t++;
@@ -3159,7 +3255,7 @@ function updateCrumbling() {
 
 /** Delete anything that has scrolled off the left, and top up the right. */
 function recycleWorld() {
-  platforms = platforms.filter(p => p.x + p.width > -50 && p.y < H + 260);
+  platforms = platforms.filter(p => p.x + p.width > -50 && p.y < WORLD_H + 260);
   coins     = coins.filter(c => c.x > -40 && !c.collected);
   spikes    = spikes.filter(s => s.x + s.size > -40);
   particles = particles.filter(p => p.life > 0);
@@ -3403,8 +3499,9 @@ function checkCollisions() {
     }
   }
 
-  // --- Fell into a gap ---
-  if (player.y > H + 50) die("fall");
+  // --- Fell into a gap (measured against the WORLD, not the screen: in
+  //     portrait the screen runs on well below the world) ---
+  if (player.y > WORLD_H + 50) die("fall");
 }
 
 /** Pick up one coin: bank the points, grow the streak, spray sparkles. */
@@ -3733,40 +3830,48 @@ function drawBackground() {
 
   // Layer 1b: stars, faded in only for night biomes.
   if (pal.starAlpha > 0.01) {
+    const stretch = (camY + 320) / 320;     // fill a taller portrait sky too
     for (const st of stars) {
       const twinkle = 0.55 + Math.sin(elapsed * 3 + st.tw) * 0.45;
       ctx.globalAlpha = pal.starAlpha * twinkle;
       ctx.fillStyle = "#FFFFFF";
       ctx.beginPath();
-      ctx.arc(st.x, st.y, st.r, 0, Math.PI * 2);
+      ctx.arc(st.x, st.y * stretch, st.r, 0, Math.PI * 2);
       ctx.fill();
     }
     ctx.globalAlpha = 1;
   }
 
-  // A soft sun / moon glow in the upper right.
+  // A soft sun / moon glow in the upper right, wherever the right edge is.
   const sunRgb = pal.sun.startsWith("#") ? hexToRgb(pal.sun).join(",")
                                          : pal.sun.slice(4, -1);
-  const sun = ctx.createRadialGradient(660, 90, 10, 660, 90, 110);
+  const sunX = W - 140;
+  const sun = ctx.createRadialGradient(sunX, 90, 10, sunX, 90, 110);
   sun.addColorStop(0, "rgba(" + sunRgb + ",0.95)");
   sun.addColorStop(1, "rgba(" + sunRgb + ",0)");
   ctx.fillStyle = sun;
-  ctx.fillRect(540, -20, 240, 240);
+  ctx.fillRect(sunX - 120, -20, 240, 240);
 
-  // Layer 2: clouds - each cloud is three overlapping circles.
+  // Layer 2: clouds - each cloud is three overlapping circles. They live in
+  // world y (40..200); in portrait the sky above the world is taller, so the
+  // band is stretched to fill it rather than leaving the top half empty.
+  const skyStretch = (camY + 200) / 200;
   ctx.fillStyle = pal.cloud;
   ctx.globalAlpha = 0.92;
   for (const cl of clouds) {
-    const s = cl.scale;
+    const s = cl.scale, cy = cl.y * skyStretch;
     ctx.beginPath();
-    ctx.arc(cl.x,          cl.y,          22 * s, 0, Math.PI * 2);
-    ctx.arc(cl.x + 26 * s, cl.y - 10 * s, 28 * s, 0, Math.PI * 2);
-    ctx.arc(cl.x + 54 * s, cl.y,          20 * s, 0, Math.PI * 2);
+    ctx.arc(cl.x,          cy,          22 * s, 0, Math.PI * 2);
+    ctx.arc(cl.x + 26 * s, cy - 10 * s, 28 * s, 0, Math.PI * 2);
+    ctx.arc(cl.x + 54 * s, cy,          20 * s, 0, Math.PI * 2);
     ctx.fill();
   }
   ctx.globalAlpha = 1;
 
-  // Layer 3: rolling hills, far layer first so near hills overlap them.
+  // Layer 3: rolling hills, far layer first so near hills overlap them. These
+  // sit on the world's ground line, so they take the camera.
+  ctx.save();
+  ctx.translate(0, camY);
   for (const far of [true, false]) {
     ctx.fillStyle = far ? pal.hillsFar : pal.hills;
     for (const h of hills) {
@@ -3779,6 +3884,7 @@ function drawBackground() {
       ctx.fill();
     }
   }
+  ctx.restore();
 }
 
 function drawPlatforms() {
@@ -3788,7 +3894,7 @@ function drawPlatforms() {
     if (p.type === "ground") {
       // Dirt body extends all the way to the bottom of the screen.
       ctx.fillStyle = pal.dirt;
-      ctx.fillRect(p.x, p.y + 8, p.width, H - p.y);
+      ctx.fillRect(p.x, p.y + 8, p.width, H - p.y);   // H >= the screen: overdraw is clipped
       ctx.fillStyle = pal.dirtDark;
       for (let i = 0; i < p.width; i += 40) {
         ctx.fillRect(p.x + i + 12, p.y + 34, 10, 6);
@@ -4760,23 +4866,56 @@ let uiScreen = "play";     // play | shop | board
 let shopTab = "hat";
 let uiButtons = [];        // rebuilt every frame; hit-tested on the next tap
 
+let hoverPt = null;    // desktop pointer, in canvas space; null on touch
+let hoverHit = false;  // did any button draw under the pointer this frame
+
+/** A button's rectangle in canvas space, whatever space it was drawn in. */
+function btnRect(b) {
+  if (!b.space) return b;
+  const { k, ox, oy } = b.space;
+  return { x: ox + b.x * k, y: oy + b.y * k, w: b.w * k, h: b.h * k };
+}
+
 function uiBtn(x, y, w, h, label, onTap, opts) {
   const o = opts || {};
-  uiButtons.push({ x, y, w, h, onTap, disabled: !!o.disabled });
+  const b = { x, y, w, h, onTap, disabled: !!o.disabled, space: uiSpace };
+  uiButtons.push(b);
+
+  // Hover, on desktop only: a lift in the fill and a brighter border. Touch
+  // has no hover, and a phantom highlight under a resting thumb would lie.
+  let hover = false;
+  if (hoverPt && !usingTouch && !o.disabled) {
+    const r = btnRect(b);
+    hover = hoverPt.x >= r.x && hoverPt.x <= r.x + r.w && hoverPt.y >= r.y && hoverPt.y <= r.y + r.h;
+    if (hover) hoverHit = true;
+  }
 
   ctx.fillStyle = o.disabled ? "rgba(60,78,94,0.75)"
                              : (o.accent || "rgba(20,32,44,0.88)");
   ctx.fillRect(x, y, w, h);
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = o.disabled ? "#4a5f72" : (o.border || "#7FD4E6");
+  if (hover) { ctx.fillStyle = "rgba(255,255,255,0.14)"; ctx.fillRect(x, y, w, h); }
+  ctx.lineWidth = hover ? 3 : 2;
+  ctx.strokeStyle = o.disabled ? "#4a5f72" : (hover ? "#FFFFFF" : (o.border || "#7FD4E6"));
   ctx.strokeRect(x, y, w, h);
 
   outlinedText(label, x + w / 2, y + h / 2 + (o.font ? 6 : 7),
                "bold " + (o.font || 20) + "px 'Trebuchet MS', sans-serif",
                o.disabled ? "#8ea6b8" : (o.color || "#FFFFFF"), "center", 3);
+
+  // Keyboard chip, desktop only: the key that presses this button, in the
+  // corner, so the shortcuts teach themselves.
+  if (o.key && !isTouch() && !o.disabled) {
+    ctx.font = "bold 11px 'Trebuchet MS', sans-serif";
+    const tw = ctx.measureText(o.key).width + 10;
+    ctx.fillStyle = "rgba(0,0,0,0.5)";
+    ctx.fillRect(x + w - tw - 5, y + 4, tw, 16);
+    ctx.fillStyle = "#DDE9F2";
+    ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+    ctx.fillText(o.key, x + w - tw / 2 - 5, y + 16);
+  }
 }
 
-/** Map a client-space point onto the fixed 800x600 canvas coordinate system. */
+/** Map a client-space point onto the canvas's logical coordinate system. */
 function canvasPoint(clientX, clientY) {
   const r = canvas.getBoundingClientRect();
   if (!r.width || !r.height) return { x: -1, y: -1 };
@@ -4792,8 +4931,8 @@ function routePress(clientX, clientY) {
   if (nameModalOpen) return true;              // the HTML modal owns input
   const pt = canvasPoint(clientX, clientY);
   for (let i = uiButtons.length - 1; i >= 0; i--) {
-    const b = uiButtons[i];
-    if (pt.x >= b.x && pt.x <= b.x + b.w && pt.y >= b.y && pt.y <= b.y + b.h) {
+    const b = uiButtons[i], r = btnRect(b);
+    if (pt.x >= r.x && pt.x <= r.x + r.w && pt.y >= r.y && pt.y <= r.y + r.h) {
       if (b.disabled) { playSfx("deny"); return true; }
       playSfx("click");
       b.onTap();
@@ -4847,8 +4986,7 @@ function drawShop() {
   const bg = ctx.createLinearGradient(0, 0, 0, H);
   bg.addColorStop(0, "#0E1B27");
   bg.addColorStop(1, "#091119");
-  ctx.fillStyle = bg;
-  ctx.fillRect(0, 0, W, H);
+  fillAll(bg);
 
   outlinedText("SHOP", 26, 52, "bold 36px 'Trebuchet MS', sans-serif", "#FFE066");
 
@@ -4911,7 +5049,7 @@ function drawShop() {
     }
   });
 
-  uiBtn(26, H - 62, 150, 46, "BACK", closeMenu, { font: 20 });
+  uiBtn(26, H - 62, 150, 46, "BACK", closeMenu, { font: 20, key: "ESC" });
   if (lifePause) {
     outlinedText("Packs, Halo and pets take effect from your next run.", W - 26, 100,
                  "bold 14px 'Trebuchet MS', sans-serif", "#9FB6C9", "right", 3);
@@ -4980,8 +5118,7 @@ function drawBoard() {
   const bg = ctx.createLinearGradient(0, 0, 0, H);
   bg.addColorStop(0, "#0E1B27");
   bg.addColorStop(1, "#091119");
-  ctx.fillStyle = bg;
-  ctx.fillRect(0, 0, W, H);
+  fillAll(bg);
 
   outlinedText("LEADERBOARD", 26, 52, "bold 34px 'Trebuchet MS', sans-serif", "#FFE066");
 
@@ -5057,9 +5194,9 @@ function drawBoard() {
                  W / 2, H - 78, "bold 16px 'Trebuchet MS', sans-serif", "#9FB6C9", "center", 3);
   }
 
-  uiBtn(26, H - 62, 150, 46, "BACK", closeMenu, { font: 20 });
+  uiBtn(26, H - 62, 150, 46, "BACK", closeMenu, { font: 20, key: "ESC" });
   uiBtn(196, H - 62, 210, 46, save.name ? "CHANGE NAME" : "SET NAME",
-        () => openNameModal(), { font: 18 });
+        () => openNameModal(), { font: 18, key: "N" });
 }
 
 /** Fallback rows when there is no cloud: this browser's own record. */
@@ -5086,7 +5223,7 @@ function drawUI() {
 
   // The death overlay carries its own, fuller version of every stat, so the
   // live HUD is hidden entirely rather than bleeding through behind it.
-  if (gameOver) { drawGameOver(meters); return; }
+  if (gameOver) { withUiSpace(() => drawGameOver(meters)); return; }
 
   // --- Score (the headline number) ---
   outlinedText(Math.floor(score).toLocaleString(), 18, 44,
@@ -5205,8 +5342,8 @@ function drawUI() {
   // Queued announcements - zone, level and evolution, one at a time.
   drawBanner();
 
-  if (!started) drawTitle();
-  if (lifePause && uiScreen === "play" && !gameOver) drawLifeLost();
+  if (!started) withUiSpace(drawTitle);
+  if (lifePause && uiScreen === "play" && !gameOver) withUiSpace(drawLifeLost);
 }
 
 
@@ -5216,8 +5353,7 @@ function drawUI() {
  * the coins you have been banking.
  */
 function drawLifeLost() {
-  ctx.fillStyle = "rgba(9,17,26,0.72)";
-  ctx.fillRect(0, 0, W, H);
+  fillAll("rgba(9,17,26,0.72)");
 
   outlinedText("LIFE LOST", W / 2, 150,
                "bold 46px 'Trebuchet MS', sans-serif", "#FF6B6B", "center");
@@ -5256,9 +5392,9 @@ function drawLifeLost() {
   const locked = resumeLock > 0;
   uiBtn(W / 2 - 215, 360, 210, 54, locked ? "WAIT" : "CONTINUE",
         resumeFromLifePause,
-        { accent: "#2B6E7F", border: "#7FD4E6", font: 22, disabled: locked });
+        { accent: "#2B6E7F", border: "#7FD4E6", font: 22, disabled: locked, key: "SPACE" });
   uiBtn(W / 2 + 5, 360, 210, 54, "SHOP", openShop,
-        { accent: "#2F6B3A", border: "#50FA7B", font: 22 });
+        { accent: "#2F6B3A", border: "#50FA7B", font: 22, key: "S" });
 
   if (!locked) {
     const pulse = 0.7 + Math.sin(elapsed * 5) * 0.3;
@@ -5275,8 +5411,7 @@ function drawLifeLost() {
  * and no drama, just the run so far and the things worth doing while stopped.
  */
 function drawPaused() {
-  ctx.fillStyle = "rgba(9,17,26,0.78)";
-  ctx.fillRect(0, 0, W, H);
+  fillAll("rgba(9,17,26,0.78)");
 
   outlinedText("PAUSED", W / 2, 132,
                "bold 50px 'Trebuchet MS', sans-serif", "#7FD4E6", "center");
@@ -5304,18 +5439,18 @@ function drawPaused() {
 
   const locked = resumeLock > 0;
   uiBtn(W / 2 - 215, 360, 210, 54, locked ? "WAIT" : "RESUME", closePause,
-        { accent: "#2B6E7F", border: "#7FD4E6", font: 22, disabled: locked });
+        { accent: "#2B6E7F", border: "#7FD4E6", font: 22, disabled: locked, key: "SPACE" });
   uiBtn(W / 2 + 5, 360, 210, 54, "SHOP", openShop,
-        { accent: "#2F6B3A", border: "#50FA7B", font: 22 });
+        { accent: "#2F6B3A", border: "#50FA7B", font: 22, key: "S" });
   uiBtn(W / 2 - 215, 426, 210, 46, "LEADERBOARD", openBoard,
-        { accent: "#2B4E7F", border: "#7FB4E6", font: 18 });
+        { accent: "#2B4E7F", border: "#7FB4E6", font: 18, key: "L" });
   // Ending here banks the run properly rather than leaving the player to die
   // on purpose to get their score onto the board.
   uiBtn(W / 2 + 5, 426, 210, 46, "END RUN", () => {
     uiScreen = "play"; menuFrom = "play";
     lives = 1;
     die(lifePauseCause || "fall");
-  }, { accent: "#6B2F2F", border: "#FF6B6B", font: 18 });
+  }, { accent: "#6B2F2F", border: "#FF6B6B", font: 18, key: "E" });
 
   if (!locked) {
     outlinedText(isTouch() ? "tap RESUME to carry on" : "press RESUME, or Escape",
@@ -5402,7 +5537,7 @@ function drawPowerHud() {
 
 function drawTitle() {
   ctx.fillStyle = "rgba(0,0,0,0.45)";
-  ctx.fillRect(0, 200, W, 190);
+  ctx.fillRect(-6000, 200, 12000, 190);      // a band across the whole screen
   outlinedText("TURBO DASH", W / 2, 265,
                "bold 54px 'Trebuchet MS', sans-serif", "#FFE066", "center");
 
@@ -5416,15 +5551,22 @@ function drawTitle() {
                          : "Hold the key down to jump higher",
                W / 2, 352, "bold 20px 'Trebuchet MS', sans-serif", "#B9E6FF", "center");
 
+  // Desktop legend, in one quiet line: the game is playable end to end from
+  // the keyboard, and this is the only place it needs saying.
+  if (!isTouch()) {
+    outlinedText("SPACE jump   ·   S shop   ·   L leaderboard   ·   ESC pause   ·   arrows steer JET",
+                 W / 2, 456, "bold 14px 'Trebuchet MS', sans-serif", "#9FB6C9", "center", 3);
+  }
+
   if (equipped("rocket").id === "cape") {
     outlinedText("SUPER SUIT: hold to fly", W / 2, 378,
                  "bold 17px 'Trebuchet MS', sans-serif", "#9FD8FF", "center", 3);
   }
 
   uiBtn(W / 2 - 210, 386, 200, 50, "SHOP", openShop,
-        { accent: "#2F6B3A", border: "#50FA7B" });
+        { accent: "#2F6B3A", border: "#50FA7B", key: "S" });
   uiBtn(W / 2 + 10, 386, 200, 50, "LEADERBOARD", openBoard,
-        { accent: "#2B4E7F", border: "#7FB4E6", font: 18 });
+        { accent: "#2B4E7F", border: "#7FB4E6", font: 18, key: "L" });
 
   if (storageOk === false) {
     outlinedText("Saving is blocked in this viewer - progress will not be kept",
@@ -5435,14 +5577,13 @@ function drawTitle() {
   }
 
   if (save.name) {
-    outlinedText("Playing as " + save.name, W / 2, 462,
+    outlinedText("Playing as " + save.name, W / 2, 476,
                  "bold 16px 'Trebuchet MS', sans-serif", "#9FB6C9", "center", 3);
   }
 }
 
 function drawGameOver(meters) {
-  ctx.fillStyle = "rgba(0,0,0,0.74)";
-  ctx.fillRect(0, 0, W, H);
+  fillAll("rgba(0,0,0,0.74)");
 
   outlinedText(newRecord ? "NEW RECORD!" : "OUT OF LIVES", W / 2, 92,
                "bold 46px 'Trebuchet MS', sans-serif",
@@ -5536,9 +5677,9 @@ function drawGameOver(meters) {
   ctx.globalAlpha = 1;
 
   uiBtn(W / 2 - 210, 526, 200, 44, "SHOP", openShop,
-        { accent: "#2F6B3A", border: "#50FA7B", font: 18 });
+        { accent: "#2F6B3A", border: "#50FA7B", font: 18, key: "S" });
   uiBtn(W / 2 + 10, 526, 200, 44, "LEADERBOARD", openBoard,
-        { accent: "#2B4E7F", border: "#7FB4E6", font: 17 });
+        { accent: "#2B4E7F", border: "#7FB4E6", font: 17, key: "L" });
 }
 
 
@@ -5650,14 +5791,18 @@ function update(dt) {
 
 function render() {
   uiButtons = [];      // rebuilt by whatever draws this frame
+  hoverHit = false;
+  // Logical pixels on a device-resolution backing store.
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.save();
   // Everything in world space shakes together; the HUD deliberately does not,
   // so the numbers stay readable during the shake.
-  if (shakeAmount > 0) {
-    ctx.translate(rand(-shakeAmount, shakeAmount), rand(-shakeAmount, shakeAmount));
-  }
+  const sx = shakeAmount > 0 ? rand(-shakeAmount, shakeAmount) : 0;
+  const sy = shakeAmount > 0 ? rand(-shakeAmount, shakeAmount) : 0;
+  ctx.translate(sx, sy);
 
-  drawBackground();
+  drawBackground();            // sky in screen space, hills in world space
+  ctx.translate(0, camY);      // the world, anchored (see the viewport note)
   drawPlatforms();
   drawCoins();
   drawPowerups();
@@ -5669,11 +5814,14 @@ function render() {
   drawSpikes();
   drawPet();
   drawPlayer();
-  drawForeground();
   drawSecrets();
   drawParticles();
-  drawSpeedLines();
   drawPopups();
+  ctx.restore();
+  ctx.save();
+  ctx.translate(sx, sy);
+  drawForeground();            // hugs the real bottom edge of the screen
+  drawSpeedLines();
   ctx.restore();
 
   // FINAL LIFE. A red pulse around the edges of the screen, strong enough to
@@ -5709,9 +5857,12 @@ function render() {
 
   drawUI();
 
-  if (uiScreen === "paused") drawPaused();
-  if (uiScreen === "shop")   drawShop();
-  if (uiScreen === "board")  drawBoard();
+  if (uiScreen === "paused") withUiSpace(drawPaused);
+  if (uiScreen === "shop")   withUiSpace(drawShop);
+  if (uiScreen === "board")  withUiSpace(drawBoard);
+
+  // Desktop: the cursor says what is clickable.
+  if (!usingTouch) canvas.style.cursor = hoverHit ? "pointer" : "default";
 }
 
 function loop(timestamp) {

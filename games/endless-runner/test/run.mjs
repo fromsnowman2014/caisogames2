@@ -148,7 +148,11 @@ console.log('\nEvolution (변신):');
     restart(); started = true; cores.length = 0;
     // (the all-time coin mission reads save.totalCoins, so both are primed -
     //  this line was a 1-in-7 flake before)
-    missions[0].target = 1; stats[missions[0].key] = 99; save.totalCoins = 99; checkMissions();
+    //  ...and ONLY that one is primed, because priming both would also finish
+    //  an all-time-coins mission sitting in another slot and drop two cores)
+    missions[0].target = 1;
+    if (missions[0].key === 'totalCoins') save.totalCoins = 99; else stats[missions[0].key] = 99;
+    checkMissions();
     o.missionDropsCoreAhead = cores.length === 1 && cores[0].x > PLAYER_X;
 
     // missing it must not destroy the reward
@@ -1416,9 +1420,11 @@ console.log('\nTurrets:');
       turrets.push({ x: PLAYER_X + ahead, y: GROUND_Y, state: 'hidden', t: 0 }); return turrets[0]; };
 
     restart(); started = true; flat(); scrollSpeed = 10; distance = 3000 * 8;
-    let tu = put(TURRET_RANGE + 200);
+    // the pop is clamped to the visible track, so the test uses that range
+    const range = Math.min(TURRET_RANGE, W - PLAYER_X - 30);
+    let tu = put(range + 200);
     updateTurrets(); o.hiddenOutOfRange = tu.state === 'hidden';
-    tu.x = PLAYER_X + TURRET_RANGE - 5;
+    tu.x = PLAYER_X + range - 5;
     updateTurrets(); o.popsInRange = tu.state === 'rising';
     let shots = 0;
     for (let i = 0; i < 200; i++) { const n = bullets.length; updateTurrets(); scrollWorld(); if (bullets.length > n) shots++; }
@@ -1427,7 +1433,7 @@ console.log('\nTurrets:');
 
     // reaction window from the pop to impact, at top speed
     restart(); started = true; flat(); scrollSpeed = MAX_SPEED; distance = 3000 * 8;
-    tu = put(TURRET_RANGE - 1);
+    tu = put(range - 1);
     let hitFrame = -1;
     for (let i = 0; i < 200 && hitFrame < 0; i++) {
       updateTurrets(); scrollWorld();

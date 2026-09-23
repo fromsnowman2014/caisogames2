@@ -1,7 +1,7 @@
 {
   "id": "endless-runner",
   "name": "Turbo Dash",
-  "version": "9.0.0",
+  "version": "9.1.0",
   "description": "A colorful endless runner platformer across ten named difficulty levels. Jump tripwires, ride springs, read portals, dodge crumbling and fake platforms, evolve mid-run, pop coin balloons, keep a pet, and chase a live shared leaderboard.",
   "author": "CaisoGames AI Team",
   "genre": "Endless Runner Platformer",
@@ -17,15 +17,36 @@
   "buildCommand": null,
   "controls": {
     "keyboard": {
-      "space": "Jump (hold for a higher jump)",
+      "space": "Jump (hold for a higher jump); start; resume; restart",
       "up": "Jump (hold for a higher jump)",
       "w": "Jump (hold for a higher jump)",
-      "escape": "Pause / resume (also closes menus)"
+      "enter": "Start / resume / restart / continue",
+      "escape": "Pause / resume; back out of any menu",
+      "s": "Shop (from the title, pause, LIFE LOST and game-over screens); JET dive during a run",
+      "l": "Leaderboard (same screens)",
+      "n": "Set or change your leaderboard name (on the leaderboard)",
+      "e": "End the run (on the pause screen)",
+      "arrows / WASD": "Steer JET: hold to climb, DOWN/S dive, RIGHT/D boost, LEFT/A brake"
+    },
+    "mouse": {
+      "click": "Jump (hold for a higher jump); buttons; drag to steer JET",
+      "hover": "Buttons lift and the cursor becomes a pointer; every button shows its key as a chip"
     },
     "touch": {
       "enabled": true,
-      "description": "Tap anywhere to jump, hold for a higher jump. Pause button in the top-right. Landscape recommended."
+      "description": "Tap anywhere to jump, hold for a higher jump, drag to steer JET. Pause button in the top-right. Both orientations, full screen."
     }
+  },
+  "viewport": {
+    "strategy": "Anchored world, elastic viewport",
+    "world": "600 logical px tall, always. Ground at 450, ceiling at 18 - every measured physics figure in this file depends on those and none of them change.",
+    "landscape": "Logical height 600; width follows the screen's aspect, clamped 800..1400. A wider phone sees further down the track.",
+    "portrait": "Logical width 600; height follows the aspect (up to 1500). The ground is anchored at 70% of the screen with sky above and earth below. 600 wide, not 800, so the character is the same size in both orientations on the same phone; the cost is 450px of look-ahead instead of 650 (0.75s at top speed, 1.5s at the start).",
+    "hud": "Drawn in screen space and pinned to the real edges.",
+    "menus": "Laid out once for 800x600 and drawn through a uniform scale-to-fit transform (withUiSpace): 1.0 in landscape, 0.75 in portrait. Buttons remember the transform so taps map back through it.",
+    "hidpi": "Backing store at device resolution (capped 2x); the game was blurry on every phone before.",
+    "measured": "iPhone 17 Pro: 402x680 CSS px used of 402x681 in portrait, 756x351 of 756x352 in landscape - no letterbox either way; character 27px / 23px. Before: a 390x292 box in the middle of the landscape screen, and a 'rotate your device' nag in portrait.",
+    "turret": "The pop range is clamped to the visible track (min(500, W - 180)), and the shell slowed 5.5 -> 4.5 so the pop-to-impact window stays above 30 frames on every screen at top speed."
   },
   "features": [
     "Three-stage in-run evolution: RUNNER -> WINGED (double jump) -> BLAZE (triple jump + glide)",
