@@ -1,7 +1,7 @@
 {
   "id": "endless-runner",
   "name": "Turbo Dash",
-  "version": "9.2.0",
+  "version": "9.3.0",
   "description": "A colorful endless runner platformer across ten named difficulty levels. Jump tripwires, ride springs, read portals, dodge crumbling and fake platforms, evolve mid-run, pop coin balloons, keep a pet, and chase a live shared leaderboard.",
   "author": "CaisoGames AI Team",
   "genre": "Endless Runner Platformer",
@@ -75,7 +75,7 @@
     "Reviving COSTS an evolution stage and the coin combo, which is what keeps scores comparable",
     "Rare heart pickups that appear more often the closer you are to losing",
     "Final-life tension: a pulsing red vignette kept to the screen edges so hazards stay readable",
-    "Super Suit: hold to fly on a per-run flight budget that only drains while held, then burns down to a Turbo Pack",
+    "Super Suit: hold to fly from the opening second on a 12s tank that refills on the ground - permanent for the run, and no flight ever ends in a plunge",
     "Ten named difficulty levels, each announcing the hazard it introduces",
     "Crumbling platforms (level 3+) that shake, crack and collapse 0.8s after you land",
     "Fake platforms (level 5+) placed as DECOYS in wide gaps, never on the route itself",
@@ -308,7 +308,7 @@
       "pause freezes the world, refuses where there is nothing to pause, and returns from menus to itself",
       "a restart always begins on the play screen, never under a stale overlay"
     ],
-    "checks": 317
+    "checks": 326
   },
   "progression": {
     "type": "in-run evolution",
@@ -539,6 +539,13 @@
       "why": "A 1.5s throttle left a window iOS could reclaim; a small JSON blob to localStorage costs well under a millisecond, so there was nothing to gain from batching and coins to lose.",
       "backup": "Primary and backup keys. The previous copy rotates to backup before each write - only if it parses, so garbage never overwrites the intact copy. A corrupt primary loads from backup and is repaired immediately, not on the next coin."
     }
+  },
+  "flightNeverEndsInAPlunge": {
+    "asked": "Make Superman mode forever, because it is very easy to die as soon as the mode goes off.",
+    "diagnosis": "Every flight source ended at the frame its tank hit zero - by definition mid-air, usually over the gap being crossed - with a full-speed fall and no warning. The Super Suit was worst: 12s once per run, then burned out for good.",
+    "whyNotInfinite": "The gaps are the game, and the shared leaderboard would go to whoever held the button longest. Every flying form keeps the rule that hovering forever is impossible by construction.",
+    "fix": "The suit is permanent for the run - its tank refills on the ground (1.2/frame, empty to full in ~10s), the same shape HERO and JET have. When ANY tank runs dry in the air, holding glides the player down (0.3x fall gravity, capped 3.2px/frame) with their air jumps intact to steer - whatever their form. The tank warns at a quarter with a beep and TANK LOW, once per flight.",
+    "whatTheSuitStillBuys": "A 12s tank from second one, versus HERO's 3.5s burst earned by three missions."
   },
   "safeResume": {
     "problemMeasured": "A revive gave a median 28 frames (0.47s) of ground before the first edge or hazard, in every one of 60 trials from HERO; a spike death did not relocate at all. The gaps already built ahead were sized for the form just lost. The world ran at full speed from frame one.",

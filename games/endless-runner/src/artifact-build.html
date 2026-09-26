@@ -436,7 +436,9 @@ function tryJump() {
   if (jumpBuffer <= 0) return;
   if (stunTimer > 0) return;                  // stumbling: no jump for you
   // While flight is available, holding IS the control: a jump would fight it.
-  if (hasSuit() || heroCanFly() || jetCanFly()) { jumpBuffer = 0; return; }
+  // The TANK decides, not the item: a suit with a dry tank must jump, or a
+  // player who has just glided down has no way over the next gap.
+  if (suitCanFly() || heroCanFly() || jetCanFly()) { jumpBuffer = 0; return; }
 
   const grounded = player.grounded || coyoteFrames > 0;
 
@@ -894,6 +896,7 @@ function playSfx(name) {
     case "deny":   tone(200, 0.16, "square",   0.14, 140);  break;
     case "shot":   tone(140, 0.14, "sawtooth", 0.22, 60);   break;
     case "web":    tone(1400, 0.08, "square",  0.12, 500);  break;
+    case "lowFuel":tone(520, 0.12, "square",   0.16, 380);  break;
     case "click":  tone(660, 0.06, "triangle", 0.10);       break;
   }
 }
@@ -2537,7 +2540,7 @@ const SHOP = {
     { id: "turbo",  name: "Turbo Pack",  price: 2400, needBest: 2500,
       desc: "Begin every run already WINGED. Needs a 2500m record." },
     { id: "cape",   name: "Super Suit",   price: 2600, needBest: 3000,
-      desc: "Hold to FLY from the opening second. 12s per run, then a Turbo Pack." }
+      desc: "Hold to FLY from the opening second. 12s tank, refills on the ground." }
   ],
   pet: [
     { id: "none", name: "No Pet",      price: 0,    desc: "Run alone." },
@@ -3052,6 +3055,10 @@ function updatePlayer() {
   if (!flying && player.grounded && stageDef().name === "JET") {
     jetFuel = Math.min(JET_FUEL_MAX, jetFuel + JET_REFILL_RATE);
   }
+  if (!flying && player.grounded && hasSuit()) {
+    flightMeter = Math.min(FLIGHT_FRAMES, flightMeter + SUIT_REFILL_RATE);
+  }
+  if (player.grounded) { flewThisAir = false; if (activeTankFrac() > 0.5) lowFuelWarned = false; }
 
   if (flying) {
     if (jetFlight) {
@@ -3088,7 +3095,14 @@ function updatePlayer() {
     }
     airFrames = 0;            // flying must not farm the big-air bonus
     player.airJumps = maxAirJumps();
-    if (suitFlight && flightMeter === 0) burnOutSuit();
+    flewThisAir = true;
+    // The quarter-tank warning: once per flight, before the fall, not after.
+    const frac = activeTankFrac();
+    if (frac !== null && frac < 0.25 && !lowFuelWarned) {
+      lowFuelWarned = true;
+      addPopup("TANK LOW", "#FF9F5A");
+      playSfx("lowFuel");
+    }
   }
   if (!jetFlight) jetSpeedMod += (1 - jetSpeedMod) * 0.1;
 
@@ -3099,8 +3113,14 @@ function updatePlayer() {
   // time - so it extends a committed jump rather than replacing the skill of
   // aiming one. Mechanically it is the reward for reaching BLAZE: the same
   // gaps are now crossable with a slower, more deliberate line.
-  gliding = !flying && stageDef().glide && jumpHeld && !player.grounded &&
-            player.velocityY > 0 && player.airJumps <= 0;
+  // SOFT LANDING. A tank that ran dry in the air used to drop the player at
+  // full speed - the moment they were highest and least ready. Now, if they
+  // flew in this airtime and every tank is empty, holding glides them down
+  // whatever their form, with the air jumps still in hand to steer.
+  const softLanding = flewThisAir && tanksDry() && (jumpHeld || th !== null) &&
+                      !player.grounded && player.velocityY > 0;
+  gliding = !flying && !player.grounded && player.velocityY > 0 &&
+            ((stageDef().glide && jumpHeld && player.airJumps <= 0) || softLanding);
 
   // SPIDER: a held jump fires the web once the jump has peaked, so one hold
   // is "jump, then swing". A fresh press in the air fires at once (tryJump).
@@ -3586,34 +3606,59 @@ function addPopup(text, color) {
    ------------------------------------------------------------------------ */
 
 /* --- SUPER SUIT ------------------------------------------------------------
-   Hold to rise, release to drop. The flight budget is a TOTAL for the run
-   rather than a refilling meter, and it only drains while you are actually
-   holding - which turns the suit from "skip the first twelve seconds" into a
-   resource you have to decide when to spend. Save it for a bad patch, or burn
-   it early and fly the opening; both are real choices.
+   Hold to rise, release to drop. Twelve seconds in the tank, from the opening
+   second, and the tank REFILLS on the ground.
 
-   When the budget is gone the suit burns out into the Turbo Pack it sits
-   above, so the run continues with the weaker power rather than simply losing
-   an item mid-flight.
+   It used to be a one-shot budget: twelve seconds for the whole run, then
+   the suit "burned out" into the pack below it. A player asked for the mode
+   to last forever, because "it is very easy to just die as soon as the mode
+   goes off" - and they were right about the death, if not the cure. The
+   burn-out fired at the exact frame the meter hit zero, which is by
+   definition mid-air, usually over the very gap the flight was crossing, and
+   the fall was at full speed with no warning. Infinite flight would fix that
+   and break the game (the gaps ARE the game, and the shared board would go
+   to whoever held the button longest). So instead:
+
+     * The suit is permanent for the run. The tank refills while running on
+       the ground, the same shape HERO and JET already have - hovering
+       forever stays impossible by construction.
+     * No flight ends in a plunge. When ANY tank runs dry in the air, holding
+       gives a slow glide down (see updatePlayer's soft landing), so there is
+       time to pick a landing and spend the air jumps.
+     * The tank warns at a quarter: a beep and TANK LOW.
+
+   What the suit still buys over HERO: a 12s tank from second one, versus a
+   3.5s burst that takes three missions to earn.
    -------------------------------------------------------------------------- */
 
-const FLIGHT_FRAMES = 720;   // 12 seconds of held flight
-const FLY_RISE = -3.0;       // the slow, deliberate climb speed
-const FLY_EASE = 0.18;       // how quickly it settles into that climb
-const FLY_CEIL = 18;         // never let the player leave the top of the world
+const FLIGHT_FRAMES = 720;    // 12 seconds of held flight
+const SUIT_REFILL_RATE = 1.2; // per grounded frame: empty to full in ~10s
+const FLY_RISE = -3.0;        // the slow, deliberate climb speed
+const FLY_EASE = 0.18;        // how quickly it settles into that climb
+const FLY_CEIL = 18;          // never let the player leave the top of the world
 
 let flightMeter;
-let suitBurned;
 let flying;
+let flewThisAir;              // a flight source was used since the last landing
+let lowFuelWarned;            // the quarter-tank warning has fired this flight
 
-function hasSuit() { return equipped("rocket").id === "cape" && !suitBurned; }
+function hasSuit() { return equipped("rocket").id === "cape"; }
+function suitCanFly() { return hasSuit() && flightMeter > 0; }
 
-function burnOutSuit() {
-  suitBurned = true;
-  flying = false;
-  addPopup("SUIT BURNED OUT", "#FF9F5A");
-  playSfx("shieldBreak");
-  shake(8);
+/** Which tank is feeding flight right now, as a 0..1 fraction, or null. */
+function activeTankFrac() {
+  if (hasSuit() && flightMeter > 0) return flightMeter / FLIGHT_FRAMES;
+  if (stageDef().name === "HERO") return heroFuel / HERO_FLIGHT_MAX;
+  if (stageDef().name === "JET")  return jetFuel / JET_FUEL_MAX;
+  return null;
+}
+
+/** True when every flight source the player has is empty. */
+function tanksDry() {
+  if (hasSuit() && flightMeter > 0) return false;
+  if (stageDef().name === "HERO" && heroFuel > 0) return false;
+  if (stageDef().name === "JET" && jetFuel > 0) return false;
+  return true;
 }
 
 const START_LIVES = 3;
@@ -4360,7 +4405,7 @@ function drawPlayer() {
     const spread = flying ? 1.5 : 1;
     ctx.save();
     ctx.translate(x + w * 0.22, y + h * 0.22);
-    ctx.fillStyle = suitBurned ? "#7A4A55" : "#E5384D";
+    ctx.fillStyle = "#E5384D";
     ctx.strokeStyle = "#5A1020";
     ctx.lineWidth = 2;
     const wave = Math.sin(elapsed * 12) * 3;
@@ -5567,7 +5612,9 @@ function drawPowerHud() {
   if (power.shield > 0) items.push({ c: "#8BE9FD", label: "SHIELD", frac: 1 });
   if (power.magnet > 0) items.push({ c: "#FF79C6", label: "MAGNET", frac: power.magnet / MAGNET_FRAMES });
   if (power.wings  > 0) items.push({ c: "#BD93F9", label: "WINGS",  frac: power.wings / WINGS_FRAMES });
-  if (equipped("rocket").id === "cape" && !suitBurned) {
+  if (equipped("rocket").id === "cape") {
+    // Shown even when empty: a bar visibly refilling is what tells the
+    // player the suit is not gone, only resting.
     items.push({ c: flightMeter / FLIGHT_FRAMES < 0.25 ? "#FF6B6B" : "#9FD8FF",
                  label: "SUIT", frac: flightMeter / FLIGHT_FRAMES });
   }
@@ -5997,7 +6044,7 @@ function restart() {
   // seeded, so the opening platforms are sized for the form the player
   // actually has rather than retro-fitted to it.
   if (equipped("rocket").id === "turbo" || equipped("rocket").id === "cape") stage = 1;
-  flightMeter = FLIGHT_FRAMES; suitBurned = false; flying = false;
+  flightMeter = FLIGHT_FRAMES; flying = false; flewThisAir = false; lowFuelWarned = false;
   cubUsed = false; petCoinBonus = 0; heroFuel = HERO_FLIGHT_MAX;
   jetFuel = JET_FUEL_MAX; jetSpeedMod = 1; endDrag();
   keyDive = keyBoost = keyBrake = false;

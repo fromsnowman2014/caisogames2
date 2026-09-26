@@ -552,7 +552,7 @@ console.log('\nSuper Suit:');
     save.best = 9999; buyItem('rocket', suit);
 
     restart(); started = true;
-    o.startsWithAFullTank = flightMeter === FLIGHT_FRAMES && !suitBurned;
+    o.startsWithAFullTank = flightMeter === FLIGHT_FRAMES;
 
     player.y = 300; player.velocityY = 0; player.grounded = false; jumpHeld = true;
     const y0 = player.y;
@@ -577,14 +577,24 @@ console.log('\nSuper Suit:');
     o.cannotFlyOffTheTopOfTheWorld = player.y >= FLY_CEIL - 0.01;
     o.flightDoesNotFarmTheBigAirBonus = airFrames === 0;
 
-    // Burn-out drops to the pack below rather than removing the item.
-    restart(); started = true; jumpHeld = true; player.grounded = false;
+    // The suit is permanent for the run: an empty tank stops the flight, and
+    // running on the ground fills it again. It used to burn out for good at
+    // this moment - mid-air, by definition - which is what killed people.
+    restart(); started = true; jumpHeld = true; player.grounded = false; player.y = 300;
     for (let i = 0; i < FLIGHT_FRAMES + 40; i++) updatePlayer();
-    o.burnsOutWhenTheTankIsEmpty = suitBurned && flightMeter === 0;
-    o.stopsFlyingOnceBurnedOut = flying === false;
-    player.grounded = true; player.velocityY = 0; jumpBuffer = 5; jumpHeld = true;
+    o.anEmptyTankStopsTheFlight = flightMeter === 0 && flying === false;
+    o.theSuitIsNotGone = hasSuit() === true;
+    // ...and while still held in the air, the fall is a glide, not a plunge
+    o.anEmptyTankGlidesDownWhileHeld = gliding === true && player.velocityY <= 3.2;
+    jumpHeld = false; updatePlayer(); updatePlayer();
+    o.releasingDropsNormally = gliding === false && player.velocityY > 3.2;
+    player.grounded = true; player.velocityY = 0; jumpHeld = false;
+    for (let i = 0; i < 100; i++) updatePlayer();
+    o.theTankRefillsOnTheGround = flightMeter > 100;
+    o.noRefillWhileHovering = (() => { const f = flightMeter; player.grounded = false; for (let i = 0; i < 30; i++) updatePlayer(); return flightMeter === f; })();
+    player.grounded = true; player.velocityY = 0; jumpBuffer = 5; jumpHeld = true; flightMeter = 0;
     tryJump();
-    o.normalJumpingReturnsAfterBurnout = player.velocityY === JUMP_STRENGTH;
+    o.normalJumpingWorksWhileTheTankIsDry = player.velocityY === JUMP_STRENGTH;
 
     save.equip.rocket = 'none'; restart(); started = true;
     player.grounded = false; player.y = 300; player.velocityY = 0; jumpHeld = true;
@@ -1022,7 +1032,7 @@ console.log('\nHERO evolution:');
     for (let i = 0; i < 30; i++) updatePlayer();
     o.theFiniteBudgetIsSpentFirst = flightMeter < f0 && heroFuel === h0;
     for (let i = 0; i < FLIGHT_FRAMES + 10; i++) updatePlayer();
-    o.aBurntSuitLeavesHeroFlightIntact = suitBurned && heroCanFly();
+    o.anEmptySuitLeavesHeroFlightIntact = flightMeter === 0 && heroCanFly();
     save.equip.rocket = 'none';
 
     // Gaps are sized for JUMPS, never assuming flight - an empty tank must
@@ -1722,6 +1732,46 @@ console.log('\nSPIDER:');
     restart(); started = true; flat(); stage = 2; player.y = 300; player.grounded = false; player.airJumps = 2;
     jumpBuffer = 5; jumpHeld = true; coyoteFrames = 0; tryJump();
     o.otherFormsStillAirJump = player.velocityY < 0 && web.active === false;
+    restart();
+    return o;
+  });
+  for (const [k, v] of Object.entries(e)) ok(v === true, k);
+  await browser.close();
+}
+
+// 28a. NO FLIGHT ENDS IN A PLUNGE. HERO and JET tanks run dry in the air like
+//      the suit's; holding then glides, and the tank warns at a quarter.
+console.log('\nSoft landing:');
+{
+  const { browser, page } = await open(webkit, TARGETS[0].ctx);
+  const e = await page.evaluate(() => {
+    const o = {};
+    const flat = () => { platforms.length = 0;
+      platforms.push({ x: -200, y: GROUND_Y, width: 6000, type: 'ground', fake: false,
+                       crumble: false, crumbleTimer: -1, fallen: false, tufts: [] }); };
+    // HERO: fly until dry, keep holding -> glide, with the air jumps intact
+    restart(); started = true; flat(); stage = 3; heroFuel = 40;
+    player.y = 200; player.grounded = false; jumpHeld = true;
+    for (let i = 0; i < 60; i++) updatePlayer();
+    o.heroGlidesWhenTheTankRunsDry = heroFuel === 0 && gliding === true && player.velocityY <= 3.2;
+    o.heroKeepsItsAirJumpsToSteer = player.airJumps === maxAirJumps();
+    // JET: same, on the drag
+    restart(); started = true; flat(); stage = 4; jetFuel = 40;
+    player.y = 200; player.grounded = false; drag = { active: true, ox: 100, oy: 100, dx: 0, dy: -80 };
+    for (let i = 0; i < 60; i++) updatePlayer();
+    o.jetGlidesWhenTheTankRunsDry = jetFuel === 0 && gliding === true && player.velocityY <= 3.2;
+    endDrag();
+    // a plain jumper who never flew gets no glide from holding
+    restart(); started = true; flat(); stage = 0;
+    player.y = 200; player.grounded = false; player.velocityY = 5; jumpHeld = true;
+    for (let i = 0; i < 10; i++) updatePlayer();
+    o.noFreeGlideWithoutAFlight = gliding === false;
+    // the warning fires once per flight, at a quarter, before the tank is empty
+    restart(); started = true; flat(); stage = 3; heroFuel = HERO_FLIGHT_MAX;
+    player.y = 200; player.grounded = false; jumpHeld = true;
+    let warnedAt = -1;
+    for (let i = 0; i < HERO_FLIGHT_MAX + 5; i++) { updatePlayer(); if (warnedAt < 0 && lowFuelWarned) warnedAt = heroFuel; }
+    o.warnsAtAQuarterTank = warnedAt > 0 && warnedAt <= HERO_FLIGHT_MAX * 0.25 + 1;
     restart();
     return o;
   });
