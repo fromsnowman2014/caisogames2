@@ -1,7 +1,7 @@
 {
   "id": "endless-runner",
   "name": "Turbo Dash",
-  "version": "9.1.1",
+  "version": "9.2.0",
   "description": "A colorful endless runner platformer across ten named difficulty levels. Jump tripwires, ride springs, read portals, dodge crumbling and fake platforms, evolve mid-run, pop coin balloons, keep a pet, and chase a live shared leaderboard.",
   "author": "CaisoGames AI Team",
   "genre": "Endless Runner Platformer",
@@ -308,7 +308,7 @@
       "pause freezes the world, refuses where there is nothing to pause, and returns from menus to itself",
       "a restart always begins on the play screen, never under a stale overlay"
     ],
-    "checks": 306
+    "checks": 317
   },
   "progression": {
     "type": "in-run evolution",
@@ -539,6 +539,13 @@
       "why": "A 1.5s throttle left a window iOS could reclaim; a small JSON blob to localStorage costs well under a millisecond, so there was nothing to gain from batching and coins to lose.",
       "backup": "Primary and backup keys. The previous copy rotates to backup before each write - only if it parses, so garbage never overwrites the intact copy. A corrupt primary loads from backup and is repaired immediately, not on the next coin."
     }
+  },
+  "safeResume": {
+    "problemMeasured": "A revive gave a median 28 frames (0.47s) of ground before the first edge or hazard, in every one of 60 trials from HERO; a spike death did not relocate at all. The gaps already built ahead were sized for the form just lost. The world ran at full speed from frame one.",
+    "fix": "The road is rebuilt. Everything behind the player is kept, everything ahead is cleared, and a flat hazard-free ground runway is laid from under their feet for RUNWAY_FRAMES (100, ~1.7s at the current speed, never under 700px). Beyond it the generator builds fresh, for the form the player has NOW. On CONTINUE the world eases from 55% of speed back to full over 90 frames (1.5s). The runway wears a pale stripe.",
+    "measuredAfter": "Median 108-127 frames of clear ground at full speed, worst case 100, across fall, spike and turret deaths from BLAZE, HERO and JET. Gaps beyond the runway never exceed what the new form is normally given.",
+    "costsUnchanged": "The form is still lost, the combo still wiped, distance neither credited nor refunded. A pending core is re-offered, not lost. Only the landing is made fair.",
+    "whyNotACountdown": "A 3-2-1 adds three seconds of waiting to every life lost; the ramp gives the same re-entry with none of the wait."
   },
   "lifePause": {
     "when": "Every life lost except the last",

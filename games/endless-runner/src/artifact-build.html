@@ -1110,7 +1110,7 @@ function targetSpeed() {
 /** The scroll for the coming frame: the target, plus whatever a swing left. */
 function frameSpeed() {
   if (web && web.active) return scrollSpeed;    // the pendulum set it this frame
-  return targetSpeed() + (swingCarry || 0);
+  return (targetSpeed() + (swingCarry || 0)) * rampFactor();
 }
 
 /**
@@ -3633,51 +3633,90 @@ function heartChance() {
   return Math.min(0.09, 0.011 * deficit * (lives <= 1 ? 2.2 : 1));
 }
 
-/**
- * Put the player back on solid ground after a fall.
- *
- * Simply dropping them back in place would be a death sentence - the hole they
- * fell into is still there. Instead the world is slid forward until a platform
- * with real landing room sits under them, so a revive always lands somewhere
- * survivable. Distance is NOT credited for the skipped span: being rescued
- * should never pay.
- */
-function reviveOnSafeGround() {
-  let target = null;
-  for (const p of platforms) {
-    if (p.width >= 130 && p.x + p.width > PLAYER_X + 120) { target = p; break; }
-  }
-  if (!target) {
-    generatePlatform();
-    target = platforms[platforms.length - 1];
-  }
-  if (!target) return;
+/* --- THE SAFE RESUME ---------------------------------------------------------
+   What a revive used to do: slide the world until a platform with 130px of
+   room sat under the player, 30px in from its left edge, and drop them onto
+   it. Measured: a median of 28 frames (0.47s) of ground before the first
+   edge or hazard, in every one of 60 trials from HERO - and a spike death
+   did not relocate at all, so the next hazard was wherever it already was.
 
-  const dx = (target.x + 30) - PLAYER_X;
-  if (dx > 0) {
-    // EVERY world layer, not just the first few. Wires, springs and portals
-    // used to stay behind while their platforms slid forward, so a revive
-    // could put a tripwire in mid-air over a gap.
-    for (const p of platforms) p.x -= dx;
-    for (const c of coins)     c.x -= dx;
-    for (const sp of spikes)   sp.x -= dx;
-    for (const pu of powerups) pu.x -= dx;
-    for (const co of cores)    co.x -= dx;
-    for (const wr of wires)    wr.x -= dx;
-    for (const sg of springs)  sg.x -= dx;
-    for (const pt of portals)  { pt.inX -= dx; if (pt.outX !== null) pt.outX -= dx; }
-    for (const tu of turrets)  tu.x -= dx;
-  }
-  // Clear anything hostile from the landing zone itself.
-  spikes = spikes.filter(sp => !(sp.x > PLAYER_X - 90 && sp.x < PLAYER_X + 180));
-  turrets = turrets.filter(tu => !(tu.x > PLAYER_X - 90 && tu.x < PLAYER_X + TURRET_RANGE));
-  bullets = [];
+   That is three problems stacked on one moment:
 
-  player.y = target.y - PLAYER_H - 50;
+     1. The player has just STOPPED. They read the LIFE LOST screen, maybe
+        opened the shop, and pressed CONTINUE. Their hands are cold. A run
+        that resumes into a gap half a second away is not resumed, it is
+        re-lost.
+     2. They are WEAKER. A revive costs a form, and every platform already
+        built ahead was sized for the form they just lost. Those gaps stay
+        jumpable (the reach table keeps a margin), but they are tighter than
+        anything the new form would have been given - at exactly the moment
+        the player is least ready for tight.
+     3. The world is at FULL SPEED from frame one. There is no re-entry.
+
+   So a revive now rebuilds the road. Everything behind the player is kept
+   (it is what they just saw), everything ahead is cleared, and a flat,
+   hazard-free ground runway is laid from under their feet - long enough for
+   RUNWAY_FRAMES of running at the current speed. Beyond it the generator
+   builds fresh, for the form they have NOW. And on CONTINUE the world eases
+   back up to speed over RAMP_FRAMES rather than snapping to it.
+
+   The costs are untouched: the form is still lost, the combo still wiped,
+   distance neither credited nor refunded. Only the landing is made fair.
+   -------------------------------------------------------------------------- */
+
+const RUNWAY_FRAMES = 100;    // ~1.7s of flat ground at the current speed
+const RUNWAY_MIN    = 700;    // never shorter than this, whatever the speed
+const RAMP_FRAMES   = 90;     // 1.5s from RAMP_FROM of the speed back to full
+const RAMP_FROM     = 0.55;
+
+let resumeRamp = 0;           // frames of speed ramp left after a CONTINUE
+
+function rebuildRunwayAfterRevive() {
+  const runway = Math.max(RUNWAY_MIN, Math.round(targetSpeed() * RUNWAY_FRAMES));
+  const cut = PLAYER_X - 60;
+
+  // Keep the world behind the player; trim anything straddling the cut.
+  platforms = platforms.filter(q => q.x < cut);
+  for (const q of platforms) if (q.x + q.width > cut) q.width = cut - q.x;
+  platforms = platforms.filter(q => q.width >= 10);
+  coins    = coins.filter(q => q.x < cut);
+  spikes   = spikes.filter(q => q.x + q.size < cut);
+  wires    = wires.filter(q => q.x + q.w < cut);
+  springs  = springs.filter(q => q.x + q.w < cut);
+  portals  = portals.filter(q => (q.outX === null ? q.inX : q.outX) + PORTAL_R < cut);
+  turrets  = turrets.filter(q => q.x + 40 < cut);
+  powerups = powerups.filter(q => q.x < cut);
+  secrets  = [];
+  bullets  = [];
+  // A pending core is a reward already earned; it is re-offered, not lost.
+  const owedCores = cores.filter(q => !q.taken && q.x >= cut).length;
+  cores = cores.filter(q => !q.taken && q.x < cut);
+
+  // The runway: plain ground, from just behind the player to well ahead.
+  platforms.push({
+    x: cut, y: GROUND_Y, width: (PLAYER_X + PLAYER_W - cut) + runway,
+    type: "ground", safe: true,
+    crumble: false, crumbleTimer: -1, fallen: false,
+    tufts: Array.from({ length: 7 }, () => Math.random())
+  });
+
+  // A short drop onto it, so the return reads as a landing, not a teleport.
+  player.y = GROUND_Y - PLAYER_H - 40;
   player.velocityY = 0;
   player.grounded = false;
   player.isJumping = true;
   player.airJumps = maxAirJumps();
+
+  // Build the road beyond the runway NOW, for the form the player has now,
+  // so the LIFE LOST screen already shows a complete world behind it.
+  recycleWorld();
+  for (let i = 0; i < owedCores; i++) spawnEvolutionCore(true);
+}
+
+/** The speed multiplier for this frame while the resume ramp is running. */
+function rampFactor() {
+  if (resumeRamp <= 0) return 1;
+  return RAMP_FROM + (1 - RAMP_FROM) * (1 - resumeRamp / RAMP_FRAMES);
 }
 
 /** Spend a life instead of ending the run. Returns true if the run continues. */
@@ -3708,7 +3747,9 @@ function spendLife(cause) {
   // revived player from a stale anchor.
   web.active = false; swingCarry = 0;
 
-  if (cause === "fall") reviveOnSafeGround();
+  // Every cause, not only falls: a spike death used to resume the player
+  // exactly where the spike was, with whatever came next unchanged.
+  rebuildRunwayAfterRevive();
 
   // The final life gets its own announcement, once.
   if (lives === 1 && !lastLifeWarned) {
@@ -3738,6 +3779,9 @@ function resumeFromLifePause() {
   lifePause = false;
   jumpBuffer = 0;                // the resuming tap must not also be a jump
   invuln = Math.max(invuln, REVIVE_INVULN);   // full mercy window on resume
+  // Ease back up to speed rather than snapping to it - the re-entry.
+  resumeRamp = RAMP_FRAMES;
+  addPopup("GO!", "#50FA7B");
   // The impact's hit-stop already had its moment during the pause. Left in
   // place it would freeze the first ten frames AFTER the tap, which reads as
   // a button that did nothing.
@@ -3918,6 +3962,12 @@ function drawPlatforms() {
       ctx.fillRect(p.x, p.y, p.width, 14);
       ctx.fillStyle = pal.grassDark;
       ctx.fillRect(p.x, p.y + 12, p.width, 4);
+      // The revive runway wears a pale stripe: "this stretch is yours". It is
+      // quiet on purpose - a reassurance, not a new object to parse.
+      if (p.safe) {
+        ctx.fillStyle = "rgba(255,255,255,0.22)";
+        ctx.fillRect(p.x, p.y + 2, p.width, 5);
+      }
 
       // Grass tufts: small triangles poking up from the surface.
       ctx.fillStyle = pal.grass;
@@ -5777,6 +5827,7 @@ function update(dt) {
     distance += scrollSpeed;
     score += scrollSpeed * 0.1 * stageDef().mult;   // distance component
     stats.runMeters = Math.floor(distance / 10);
+    if (resumeRamp > 0) resumeRamp--;
     scrollSpeed = frameSpeed();
     // Heartbeat: even if some mutation path forgot to persist, at most one
     // second of change is ever at risk. persist() itself skips unchanged
@@ -5927,7 +5978,7 @@ function restart() {
 
   beatBest = false;
   lives = START_LIVES; reviveFlash = 0; lastLifeWarned = false;
-  lifePause = false; lifePauseCause = null;
+  lifePause = false; lifePauseCause = null; resumeRamp = 0;
   // A new run always begins on the play screen. Without this a paused or
   // menu screen survives the restart and the next run starts underneath an
   // overlay it has no way to dismiss.

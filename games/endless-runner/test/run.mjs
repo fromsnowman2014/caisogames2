@@ -1503,13 +1503,15 @@ console.log('\nTurrets:');
     o.neverInTheLandingZone = inLanding === 0;
     o.neverCrowdOtherHazards = crowded === 0;
 
-    // a revive slides every layer together (wires used to lag behind)
+    // a revive lays a clear runway: whatever was ahead - wires included - is
+    // gone from it, and nothing hostile sits on it
     restart(); started = true; distance = 3000 * 8;
     const pl = platforms[platforms.length - 1];
     wires.length = 0; wires.push({ x: pl.x + 100, y: pl.y, w: 46, hit: false });
-    const off = wires[0].x - pl.x;
     player.y = H + 200; lives = 3; checkCollisions();
-    o.reviveKeepsWiresOnTheirPlatform = platforms.some(q => Math.abs((wires[0].x - q.x) - off) < 0.01);
+    const rw = platforms.find(q => q.safe);
+    const onRunway = x => rw && x >= rw.x && x <= rw.x + rw.width;
+    o.reviveRunwayHasNoWiresOrTurrets = !!rw && !wires.some(q => onRunway(q.x)) && !turrets.some(q => onRunway(q.x));
     restart();
     return o;
   });
@@ -1724,6 +1726,88 @@ console.log('\nSPIDER:');
     return o;
   });
   for (const [k, v] of Object.entries(e)) ok(v === true, k);
+  await browser.close();
+}
+
+// 28b. THE SAFE RESUME. A revive used to give a median 28 frames (0.47s) of
+//      ground before the first edge or hazard, with the gaps ahead sized for
+//      the form just lost. Now: a flat runway, fresh gaps for the form the
+//      player HAS, and a speed ramp on CONTINUE. The costs stay.
+console.log('\nSafe resume:');
+{
+  const { browser, page } = await open(webkit, TARGETS[0].ctx);
+  const e = await page.evaluate(() => {
+    const o = {};
+    const safeFramesAhead = () => {
+      const px = PLAYER_X + PLAYER_W;
+      const ground = platforms.filter(q => !q.fake && q.x <= px && q.x + q.width >= PLAYER_X)
+                              .sort((a, b) => b.x + b.width - (a.x + a.width))[0];
+      if (!ground) return 0;
+      const edge = ground.x + ground.width - px;
+      const haz = [...spikes.map(q => q.x), ...wires.map(q => q.x), ...turrets.map(q => q.x),
+                   ...portals.map(q => q.inX), ...springs.map(q => q.x)].filter(x => x > px);
+      const first = haz.length ? Math.min(...haz) - px : Infinity;
+      return Math.min(edge, first) / targetSpeed();
+    };
+    const dieBy = (cause) => { if (cause === 'fall') { player.y = H + 200; checkCollisions(); } else die(cause); };
+
+    let worst = Infinity, gapTooWide = 0, crumbleUnderfoot = 0;
+    for (const [cause, st, dist] of [['fall', 3, 18000], ['spike', 3, 18000], ['shot', 4, 24000], ['fall', 2, 9000]]) {
+      for (let t = 0; t < 25; t++) {
+        restart(); started = true; distance = dist; scrollSpeed = targetSpeed();
+        for (let i = 0; i < st; i++) evolve();
+        for (let i = 0; i < 60; i++) update(16);
+        dieBy(cause);
+        if (gameOver) continue;
+        worst = Math.min(worst, safeFramesAhead());
+        const rw = platforms.find(q => q.safe);
+        if (rw && rw.crumble) crumbleUnderfoot++;
+        // the first gap beyond the runway must be one the NEW form is given
+        const next = platforms.filter(q => !q.fake && q.x > rw.x + rw.width).sort((a, b) => a.x - b.x)[0];
+        if (next && next.x - (rw.x + rw.width) > gapRange()[1] + 1) gapTooWide++;
+      }
+    }
+    o.atLeastNinetyFramesOfClearGround = worst >= 90;
+    o.worstCaseFrames = Math.round(worst);
+    o.theRunwayNeverCrumbles = crumbleUnderfoot === 0;
+    o.gapsBeyondAreSizedForTheNewForm = gapTooWide === 0;
+
+    // the world BEHIND the player is untouched; a pending core is re-offered
+    restart(); started = true; distance = 9000; evolve(); evolve();
+    for (let i = 0; i < 60; i++) update(16);
+    const behind = platforms.filter(q => q.x + q.width < PLAYER_X - 60).map(q => q.x);
+    cores.length = 0; cores.push({ x: PLAYER_X + 300, y: 300, taken: false, bob: 0, spin: 0 });
+    dieBy('spike');
+    o.theWorldBehindIsKept = behind.every(x => platforms.some(q => q.x === x));
+    o.aPendingCoreIsReoffered = cores.filter(q => !q.taken).length === 1 && cores[0].x > PLAYER_X;
+    o.nothingLivesOnTheRunway = (() => {
+      const rw = platforms.find(q => q.safe);
+      const on = x => x > rw.x && x < rw.x + rw.width;
+      return !spikes.some(q => on(q.x)) && !wires.some(q => on(q.x)) && !turrets.some(q => on(q.x)) &&
+             !springs.some(q => on(q.x)) && !portals.some(q => on(q.inX)) && bullets.length === 0;
+    })();
+
+    // the ramp: CONTINUE resumes at ~55% speed and is back to full in 1.5s
+    for (let i = 0; i < RESUME_LOCK + 2; i++) update(16);
+    resumeFromLifePause();
+    const full = targetSpeed();
+    update(16); const first = scrollSpeed;
+    for (let i = 0; i < RAMP_FRAMES + 2; i++) update(16);
+    o.resumeStartsSlow = first < full * 0.62 && first > full * 0.5;
+    o.backToFullSpeedAfterTheRamp = Math.abs(scrollSpeed - targetSpeed()) < 0.01 && resumeRamp === 0;
+
+    // the costs are untouched
+    restart(); started = true; evolve(); evolve(); combo = 7; const d0 = distance = 5000;
+    for (let i = 0; i < 30; i++) update(16);
+    const d1 = distance, st0 = stage;
+    dieBy('fall');
+    o.formStillLost = stage === st0 - 1;
+    o.comboStillWiped = combo === 0;
+    o.distanceNeitherCreditedNorRefunded = distance === d1;
+    restart();
+    return o;
+  });
+  for (const [k, v] of Object.entries(e)) { if (typeof v === 'number') console.log('  worst-case clear ground: ' + v + ' frames'); else ok(v === true, k); }
   await browser.close();
 }
 
