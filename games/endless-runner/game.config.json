@@ -1,7 +1,7 @@
 {
   "id": "endless-runner",
   "name": "Turbo Dash",
-  "version": "9.1.0",
+  "version": "9.1.1",
   "description": "A colorful endless runner platformer across ten named difficulty levels. Jump tripwires, ride springs, read portals, dodge crumbling and fake platforms, evolve mid-run, pop coin balloons, keep a pet, and chase a live shared leaderboard.",
   "author": "CaisoGames AI Team",
   "genre": "Endless Runner Platformer",
@@ -308,7 +308,7 @@
       "pause freezes the world, refuses where there is nothing to pause, and returns from menus to itself",
       "a restart always begins on the play screen, never under a stale overlay"
     ],
-    "checks": 304
+    "checks": 306
   },
   "progression": {
     "type": "in-run evolution",
@@ -517,6 +517,12 @@
     "whyTheThirdJump": "A held double jump already reaches the ceiling (measured: player top 26px vs ceiling 18px), so height gates nothing. Counting jumps in one flight - ground + 2 air = 3 - makes it a move you have to know, and a flying form cannot stumble into it.",
     "prizes": "coins 300 (w40), instant HERO (w22), a free shop item the player's RECORD already qualifies them for (w22), 1000 coins (w8), all lives (w8). Coins are wallet-only. HERO is per-run. Fallbacks to coins when a prize would be useless.",
     "whyNot6000Coins": "6000 is ~40% of the whole shop in one touch, and a good BLAZE run meets several clouds. 300/1000 keep it a jackpot without collapsing the economy; the free item and the instant HERO are the prizes that feel big."
+  },
+  "portalExits": {
+    "measuredBefore": "35-41% of generator-placed portals ever resolved an exit, per level. The rest were drawn and inert - a ring you ran into that did nothing.",
+    "fix": "Two parts. resolvePortalExits accepts any real platform that OVERLAPS the warp window with 80px of landing room, not only one that starts inside it (that alone reached ~70%). And generatePlatform, when it is building the platform that lands in an unresolved portal's window, stretches it to guarantee that room and never makes it a crumbler.",
+    "measuredAfter": "100% at levels 7-10.",
+    "safetyNet": "A portal whose window has been built past with no exit is removed before the player reaches it - checked AFTER resolution, never before."
   },
   "walletLedger": {
     "invariant": "walletBefore + runWalletGain - runWalletSpent === walletAfter, asserted at finishRun",

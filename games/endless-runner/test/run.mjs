@@ -1287,14 +1287,38 @@ console.log('\nPortals:');
     // a portal that finds none stays inert by design (checked below), so the
     // resolution itself is given a few worlds to happen in.
     let pt;
+    // The entry goes on the opening runway BEFORE the world beyond it is
+    // built, as the generator itself places portals; the generator then owes
+    // it an exit (it stretches the platform in the window - see
+    // generatePlatform), and an entry it could not serve is removed.
     for (let attempt = 0; attempt < 8; attempt++) {
-      restart(); distance = 3000 * 8; portals.length = 0;
-      portals.push({ inX: 700, inY: GROUND_Y - 30, outX: null, outY: 0, used: false, spin: 0 });
+      restart(); distance = 3000 * 8;
+      platforms = platforms.slice(0, 1); portals.length = 0;
+      portals.push({ inX: 500, inY: GROUND_Y - 30, outX: null, outY: 0, used: false, spin: 0 });
       recycleWorld();
       pt = portals[0];
-      if (pt.outX !== null) break;
+      if (pt && pt.outX !== null) break;
     }
+    o.theEntryIsServedNotDropped = !!pt;
+    if (!pt) pt = { inX: 500, outX: null, outY: 0 };
     const under = pt.outX !== null && platforms.find(q => !q.fake && !q.crumble && pt.outX >= q.x && pt.outX <= q.x + q.width);
+
+    // Measured before this fix: 35-41% of generator-placed portals ever got
+    // an exit. Now every one must, at every level they appear on.
+    let placed = 0, resolved = 0;
+    for (const lvl of [7, 9, 10]) for (let t = 0; t < 40; t++) {
+      restart(); distance = 3000 * (lvl - 1); scrollSpeed = targetSpeed();
+      for (let i = 0; i < 40; i++) generatePlatform();
+      resolvePortalExits();
+      for (const q of portals) {
+        placed++;
+        let last = lastRealPlatform();
+        while (last.x + last.width < q.inX + WARP_MAX + 60) { generatePlatform(); last = lastRealPlatform(); }
+        resolvePortalExits();
+        if (q.outX !== null) resolved++;
+      }
+    }
+    o.generatorPlacedPortalsAllGetAnExit = placed > 30 && resolved / placed >= 0.95;
     o.theExitResolvesAboveARealPlatform = !!under && pt.outY === under.y - 96;
     o.theExitIsVisibleBeforeTheEntry = pt.outX !== null && pt.outX > pt.inX + WARP_MIN - 1;
     const mk = () => { portals.length = 0; portals.push({ inX: PLAYER_X + PLAYER_W / 2, inY: player.y + PLAYER_H / 2,

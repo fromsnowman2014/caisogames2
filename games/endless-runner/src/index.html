@@ -1309,18 +1309,32 @@ function portalChance() {
   return Math.min(0.28, 0.14 + (levelT() - 0.66) * 0.4);
 }
 
-/** Give any exit-less portal a landing platform, once one exists ahead of it. */
+/**
+ * Give any exit-less portal a landing platform, once one exists ahead of it.
+ *
+ * The exit may sit over ANY real platform that overlaps the warp window with
+ * room to land on - not only one that begins inside it. The original rule
+ * (platform must START in the 200px window, and be 110px wide) resolved just
+ * 35-41% of portals, measured per level; the other six in ten were drawn and
+ * inert, a ring you ran into that did nothing. Overlap resolves ~all of them.
+ */
+const WARP_LAND = 80;      // landing room the exit needs on its platform
+
 function resolvePortalExits() {
   for (const pt of portals) {
     if (pt.outX !== null) continue;
+    const lo = pt.inX + WARP_MIN, hi = pt.inX + WARP_MAX;
+    let best = null, bestRoom = 0;
     for (const q of platforms) {
-      if (q.fake || q.crumble) continue;
-      if (q.x < pt.inX + WARP_MIN || q.x > pt.inX + WARP_MAX) continue;
-      if (q.width < 110) continue;
-      pt.outX = q.x + q.width * 0.4;
-      pt.outY = q.y - 96;
-      break;
+      if (q.fake || q.crumble || q.fallen) continue;
+      const a = Math.max(q.x + 20, lo), b = Math.min(q.x + q.width - 20, hi);
+      if (b - a < WARP_LAND) continue;
+      if (b - a > bestRoom) { bestRoom = b - a; best = { q, a, b }; }
     }
+    if (!best) continue;
+    // land a little way in, never on the platform's first pixels
+    pt.outX = best.a + Math.min(40, (best.b - best.a) / 2);
+    pt.outY = best.q.y - 96;
   }
 }
 
@@ -1619,10 +1633,27 @@ function generatePlatform() {
   // Charge the climb against the horizontal budget so the jump stays possible.
   gap = Math.min(gap, reachableGap(last.y - y));
 
+  // PORTAL EXITS ARE GUARANTEED HERE. A portal entry is placed before the
+  // ground under its exit exists, and left to chance only 35-41% of them ever
+  // got one (measured per level) - the rest were rings that did nothing.
+  // So when this platform is the one that lands in an unresolved portal's
+  // window, it is stretched to give the exit WARP_LAND of room, and it may
+  // not be a crumbler: an exit over a slab that lets go is not an exit.
+  let servesPortal = false;
+  const px0 = last.x + last.width + gap;
+  for (const pt of portals) {
+    if (pt.outX !== null) continue;
+    const lo = pt.inX + WARP_MIN, hi = pt.inX + WARP_MAX;
+    if (px0 > hi - (WARP_LAND + 40)) continue;               // too late for this one
+    const needEnd = Math.max(px0, lo) + WARP_LAND + 40;
+    if (px0 + width < needEnd) width = Math.min(520, needEnd - px0);
+    if (px0 + width >= needEnd) servesPortal = true;
+  }
+
   // CRUMBLING PLATFORMS (level 3+). Real, but they collapse shortly after
   // they are stood on, so the skill is refusing to linger. They are only ever
   // floating slabs: a crumbling piece of ground would leave no route at all.
-  const crumble = type === "floating" && levelOf() >= 3 &&
+  const crumble = type === "floating" && levelOf() >= 3 && !servesPortal &&
                   Math.random() < crumbleChance();
 
   const plat = {
@@ -3286,6 +3317,14 @@ function recycleWorld() {
     last = lastRealPlatform();
   }
   resolvePortalExits();
+
+  // AFTER resolving, never before: a portal whose window the generator has
+  // built past and which still has no exit never will, so it is removed
+  // before the player reaches it rather than left as a ring that does
+  // nothing. With the generator now stretching the platform in the window,
+  // this is a safety net, not the plan.
+  const built = lastRealPlatform();
+  portals = portals.filter(q => !(q.outX === null && built.x + built.width > q.inX + WARP_MAX + 60));
 }
 
 /**
