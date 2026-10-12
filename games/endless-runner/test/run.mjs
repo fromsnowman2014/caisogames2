@@ -1174,7 +1174,10 @@ console.log('\nSave on every change:');
     o.blurWrites = fire(window, 'blur');
     o.freezeWrites = fire(document, 'freeze');
 
-    // the heartbeat catches anything a mutation path forgot
+    // the heartbeat catches anything a mutation path forgot. (The lifecycle
+    // events above also paused and saved the live run, as leaving the page
+    // now does; take it back so the run is playing again.)
+    reclaimLiveRun(); uiScreen = 'play'; countdown = 0;
     save.wallet = 9000; lastBody = ''; lastPersistAt = performance.now() - 5000;
     update(16);
     o.heartbeatWritesAMissedChange = onDisk() === 9000;
@@ -1407,7 +1410,11 @@ console.log('\nPause:');
     for (let i = 0; i < RESUME_LOCK + 2; i++) update(16);
     closePause();
     o.resumeWorksOnceUnlocked = uiScreen === 'play' && jumpBuffer === 0;
-    update(16);
+    // RESUME counts in (3-2-1) rather than snapping straight into motion
+    o.resumeCountsIn = countdown === COUNTDOWN_FRAMES;
+    for (let i = 0; i < COUNTDOWN_FRAMES - 1; i++) update(16);
+    o.theWorldHoldsDuringTheCount = distance === d0;
+    update(16); update(16);
     o.theWorldMovesAgain = distance > d0;
 
     // A menu opened from the pause returns to the pause, not into a run the
@@ -1895,6 +1902,264 @@ console.log('\nMissions re-roll:');
     return o;
   });
   for (const [k, v] of Object.entries(e)) ok(v === true, k);
+  await browser.close();
+}
+
+// 30. THE SAVED RUN. Leaving the game saves the run as an exact world;
+//     CONTINUE restores it and consumes the save. One slot that cannot be
+//     loaded twice is what keeps the shared board honest.
+console.log('\nSaved run:');
+{
+  const { browser, page } = await open(webkit, TARGETS[0].ctx);
+  const e = await page.evaluate(() => {
+    const o = {};
+    const runFor = n => { for (let i = 0; i < n; i++) update(16); };
+
+    // A restored run plays on exactly like the original would have: same
+    // inputs, same seeded randomness, every gameplay field compared. Scenery
+    // is carried across by hand - it re-rolls with the shared random stream
+    // when it wraps, and the snapshot leaves it out on purpose.
+    const seeded = seed => () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+      let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+    const realRandom = Math.random;
+    const drive = n => { for (let f = 0; f < n; f++) { if (f % 37 === 0) pressJump(); if (f % 37 === 9) releaseJump(); update(16); } };
+    const pick = () => { const x = snapshotRun(); delete x.savedAt; delete x.seq; return JSON.stringify(x); };
+    let exact = 0, tried = 0;
+    for (const [st, dist] of [[2, 7000], [3, 22000], [4, 25000]]) {
+      restart(); started = true; distance = dist;
+      for (let i = 0; i < st; i++) evolve();
+      drive(400);
+      while (hitStop > 0 || lifePause || jumpHeld) { if (lifePause) { resumeLock = 0; resumeFromLifePause(); } releaseJump(); update(16); }
+      if (gameOver) continue;
+      tried++;
+      const S = snapshotRun(), profile = JSON.stringify(save), E = elapsed;
+      const cosmetic = JSON.stringify({ clouds, hills, speedLines, stars, grassTufts, runFrame, runTimer, coinFrame, coinTimer });
+      Math.random = seeded(1234); elapsed = E; drive(300); const A = pick();
+      save = JSON.parse(profile); applySnapshot(S);
+      { const c = JSON.parse(cosmetic); clouds = c.clouds; hills = c.hills; speedLines = c.speedLines; stars = c.stars;
+        grassTufts = c.grassTufts; runFrame = c.runFrame; runTimer = c.runTimer; coinFrame = c.coinFrame; coinTimer = c.coinTimer; }
+      Math.random = seeded(1234); elapsed = E; drive(300); const B = pick();
+      Math.random = realRandom;
+      if (A === B) exact++;
+    }
+    o.aRestoredRunContinuesExactlyAsTheOriginal = tried >= 2 && exact === tried;
+
+    // SAVE & QUIT -> title -> a tap continues, exactly, after a 3-2-1
+    restart(); started = true; distance = 9000; evolve(); evolve(); runFor(200);
+    const before = { d: distance, s: score, lives, stage, x0: platforms[0].x, rid: runId };
+    openPause(); runFor(RESUME_LOCK + 2);
+    saveAndQuit();
+    o.saveAndQuitReturnsToTheTitle = !started && !gameOver && !!pendingRun && !!readLocalRun();
+    resumeLock = 0; pressJump();
+    o.aTapOnTheTitleContinues = started && distance === before.d && score === before.s &&
+      lives === before.lives && stage === before.stage && runId === before.rid && platforms[0].x === before.x0;
+    o.continuingConsumesTheSave = !readLocalRun() && pendingRun === null;
+    const d0 = distance;
+    pressJump();
+    o.noJumpIsBufferedDuringTheCount = jumpBuffer === 0;
+    releaseJump(); runFor(COUNTDOWN_FRAMES - 1);
+    o.theWorldHoldsDuringTheCount = distance === d0;
+    runFor(3);
+    o.itMovesAtGo = distance > d0;
+
+    // leaving pauses and saves; coming back takes the save back
+    onLeavingPage();
+    o.leavingPausesAndSaves = uiScreen === 'paused' && !!readLocalRun() && readLocalRun().runId === runId;
+    reclaimLiveRun();
+    o.comingBackTakesTheSaveBack = !readLocalRun() && started && !gameOver;
+
+    // nothing survives the run's end
+    uiScreen = 'play'; countdown = 0; lives = 1; invuln = 0; die('fall');
+    o.gameOverLeavesNothingToLoad = gameOver && !readLocalRun() && pendingRun === null;
+
+    // a doomed fall is still doomed after a save and a continue
+    restart(); started = true; distance = 5000;
+    platforms = platforms.filter(q => q.x > PLAYER_X + 400);
+    spikes = []; wires = []; turrets = []; springs = []; portals = [];
+    player.y = 380; player.velocityY = 6; player.grounded = false; player.airJumps = 0;
+    const l0 = lives;
+    saveAndQuit(); resumeLock = 0; continueRun(); runFor(COUNTDOWN_FRAMES + 120);
+    o.aDoomedFallStaysDoomed = lives === l0 - 1 || gameOver;
+
+    // a copy left open elsewhere is forfeited once the run moved on
+    restart(); started = true; distance = 5000; runFor(60);
+    onLeavingPage(); clearLocalRun(); reclaimLiveRun();
+    o.aStaleCopyIsForfeitedNotPlayedTwice = !started && /continued/.test(runNotice);
+
+    // NEW RUN: two taps, and the saved run's score is banked, not lost
+    restart(); started = true; distance = 5000; runFor(60); score = 98765;
+    saveAndQuit(); newRunFromTitle();
+    o.newRunNeedsASecondTap = !!pendingRun && newRunArmed > 0 && !gameOver;
+    newRunFromTitle();
+    o.newRunBanksTheSavedRun = gameOver && save.bestScore >= 98765 && !readLocalRun() && !pendingRun;
+
+    // END RUN ends the run even inside the post-revive mercy window
+    restart(); started = true; distance = 5000; runFor(30);
+    die('spike'); resumeLock = 0; resumeFromLifePause(); openPause(); resumeLock = 0;
+    const mercy = invuln > 0;
+    endRunNow();
+    o.endRunWorksDuringTheMercyWindow = mercy && gameOver === true;
+
+    // saved on the LIFE LOST screen: continues as if CONTINUE was pressed
+    restart(); started = true; distance = 5000; runFor(30);
+    die('spike'); onLeavingPage();
+    const snap = readLocalRun();
+    restart(); pendingRun = snap; resumeLock = 0; continueRun();
+    o.aLifeLostSaveResumesStraightIn = !lifePause && resumeRamp > 0 && invuln > 0;
+
+    // JSON has no Infinity: an unscored spike must not pay a free CLOSE CALL
+    restart(); started = true;
+    spikes = [{ x: PLAYER_X + 300, y: GROUND_Y - 30, size: 30, near: Infinity, scored: false }];
+    applySnapshot(snapshotRun());
+    o.anUnscoredSpikeSurvivesTheRoundTrip = spikes[0].near === Infinity;
+
+    // blocked storage and no cloud: SAVE & QUIT says so and keeps the run
+    restart(); started = true; distance = 5000; runFor(30);
+    const realSet = Storage.prototype.setItem;
+    Storage.prototype.setItem = function () { throw new Error('blocked'); };
+    saveAndQuit();
+    Storage.prototype.setItem = realSet;
+    o.blockedStorageKeepsTheRunAndSaysSo = started && !gameOver && /Could not save/.test(runNotice);
+
+    // a malformed save from storage is ignored rather than crashing boot
+    localStorage.setItem(RUN_KEY, JSON.stringify({ v: 1, runId: 'x', world: {} }));
+    o.aMalformedSaveIsIgnored = readLocalRun() === null;
+    clearLocalRun();
+    restart();
+    return o;
+  });
+  for (const [k, v] of Object.entries(e)) ok(v === true, k);
+
+  // A real reload offers the run on the title.
+  await page.evaluate(() => { restart(); started = true; distance = 12000; for (let i = 0; i < 60; i++) update(16); onLeavingPage(); });
+  const m = await page.evaluate(() => readLocalRun().meters);
+  await page.reload(); await page.waitForTimeout(1200);
+  const back = await page.evaluate(() => ({ offered: !!pendingRun, m: pendingRun && pendingRun.meters }));
+  ok(back.offered && back.m === m, 'after a reload the title offers the saved run', JSON.stringify(back));
+  await page.evaluate(() => { clearLocalRun(); pendingRun = null; });
+  await browser.close();
+}
+
+// 30b. KEYBOARD. Every menu button has a key, shown on the button; these
+//      are the ones a desktop player runs the whole game with.
+console.log('\nKeyboard:');
+{
+  const { browser, page } = await open(webkit, { viewport: { width: 1200, height: 800 } });
+  const e = await page.evaluate(() => {
+    const o = {};
+    const press = code => window.dispatchEvent(new KeyboardEvent('keydown', { code, key: code, bubbles: true, cancelable: true }));
+    const lift = code => window.dispatchEvent(new KeyboardEvent('keyup', { code, key: code, bubbles: true, cancelable: true }));
+    const runFor = n => { for (let i = 0; i < n; i++) update(16); };
+    restart();
+    press('KeyS'); o.sOpensTheShopFromTheTitle = uiScreen === 'shop';
+    press('Escape'); o.escapeClosesIt = uiScreen === 'play';
+    press('KeyL'); o.lOpensTheBoard = uiScreen === 'board';
+    press('Escape');
+    started = true;
+    press('KeyS'); o.sIsJetDiveDuringARunNotShop = uiScreen === 'play' && keyDive === true;
+    lift('KeyS');
+    press('Escape'); o.escapePausesARun = uiScreen === 'paused';
+    runFor(RESUME_LOCK + 2);
+    press('Enter'); o.enterResumesThroughTheCount = uiScreen === 'play' && countdown === COUNTDOWN_FRAMES;
+    runFor(COUNTDOWN_FRAMES + 2);
+    distance = 6000; runFor(10);
+    press('Escape'); runFor(RESUME_LOCK + 2);
+    press('KeyQ'); o.qSavesAndQuits = !started && !!pendingRun && !!readLocalRun();
+    press('KeyN'); o.nArmsNewRun = newRunArmed > 0 && !!pendingRun;
+    newRunArmed = 0;
+    resumeLock = 0; press('Space');
+    o.spaceContinuesTheSavedRun = started && pendingRun === null && countdown > 0;
+    runFor(COUNTDOWN_FRAMES + 2);
+    press('Escape'); runFor(RESUME_LOCK + 2);
+    press('KeyE'); o.eEndsTheRunFromThePause = gameOver === true;
+    runFor(RESUME_LOCK + 2);
+    press('Enter'); o.enterRestartsAfterGameOver = gameOver === false;
+    restart();
+    return o;
+  });
+  for (const [k, v] of Object.entries(e)) ok(v === true, k);
+  await browser.close();
+}
+
+// 31. THE CLOUD SAVE. Mirrored to the player's private area of the db, so it
+//     continues on another device - and a copy left running on the first
+//     device is forfeited rather than played twice.
+console.log('\nCloud save:');
+{
+  const browser = await webkit.launch();
+  const store = new Map();
+  let refuse = false;
+  const MOCK = () => {
+    const ref = path => ({
+      id: path.split('/').pop(), path,
+      get: async () => { const v = await window.__dbGet(path);
+        return { id: path.split('/').pop(), exists: v !== null, data: () => v === null ? undefined : JSON.parse(v) }; },
+      set: async body => { const r = await window.__dbSet(path, JSON.stringify(body)); if (r) throw { code: r }; },
+      delete: async () => { await window.__dbDel(path); }
+    });
+    const q = name => { const o = { orderBy: () => o, limit: () => o,
+      onSnapshot: next => { next({ docs: [], size: 0, empty: true }); return () => {}; },
+      doc: id => ref(name + '/' + id) }; return o; };
+    window.claude = { use: n => Promise.resolve(n === 'db' ? { doc: ref, collection: q } :
+                                                n === 'user' ? { id: async () => 'u1' } : null) };
+  };
+  const device = async () => {
+    const ctx = await browser.newContext(TARGETS[0].ctx);
+    await ctx.exposeFunction('__dbGet', p => store.has(p) ? JSON.stringify(store.get(p)) : null);
+    await ctx.exposeFunction('__dbSet', (p, body) => { if (refuse) return 'invalid_argument'; store.set(p, JSON.parse(body)); return null; });
+    await ctx.exposeFunction('__dbDel', p => { store.delete(p); });
+    await ctx.addInitScript(MOCK);
+    const page = await ctx.newPage();
+    await page.route('**/game.html', r => r.fulfill({ status: 200, headers: { 'content-type': 'text/html; charset=utf-8' }, body: html }));
+    await page.goto('https://turbo-dash.test/game.html');
+    await page.waitForTimeout(1500);
+    return page;
+  };
+  const settle = p => p.evaluate(async () => { await cloudChain; await new Promise(r => setTimeout(r, 50)); await cloudChain; });
+  const SAVE = 'data/users/u1/turbo';
+
+  const phone = await device();
+  const saved = await phone.evaluate(() => {
+    restart(); started = true; distance = 15000; evolve(); evolve(); evolve();
+    for (let i = 0; i < 200; i++) update(16);
+    onLeavingPage();
+    return { m: Math.floor(distance / 10), runId, stage: stageDef().name, lives, score: Math.floor(score) };
+  });
+  await settle(phone);
+  ok(store.has(SAVE) && store.get(SAVE).runId === saved.runId, 'leaving the app writes the run to the player\'s private cloud area');
+
+  const pc = await device();
+  await settle(pc);
+  const offered = await pc.evaluate(() => ({ src: pendingRun && pendingRun.src, m: pendingRun && pendingRun.meters }));
+  ok(offered.src === 'cloud' && offered.m === saved.m, 'another device is offered the run', JSON.stringify(offered));
+  await pc.evaluate(() => { resumeLock = 0; continueRun(); });
+  await settle(pc);
+  const there = await pc.evaluate(() => ({ m: Math.floor(distance / 10), runId, stage: stageDef().name, lives, score: Math.floor(score) }));
+  ok(JSON.stringify(there) === JSON.stringify({ m: saved.m, runId: saved.runId, stage: saved.stage, lives: saved.lives, score: saved.score }),
+     'it continues there exactly', JSON.stringify(there));
+  ok(!store.has(SAVE), 'continuing consumes the cloud copy');
+
+  await phone.evaluate(() => reclaimLiveRun());
+  await settle(phone);
+  const stale = await phone.evaluate(() => ({ started, notice: runNotice }));
+  ok(!stale.started && /continued/.test(stale.notice), 'the copy left on the first device is forfeited', JSON.stringify(stale));
+
+  // game over never deletes a different run's cloud save
+  await phone.evaluate(() => { restart(); started = true; distance = 4000; for (let i = 0; i < 60; i++) update(16); });
+  store.set(SAVE, { v: 1, runId: 'r-other-device' });
+  await phone.evaluate(() => { lives = 1; invuln = 0; die('fall'); });
+  await settle(phone);
+  ok(store.has(SAVE) && store.get(SAVE).runId === 'r-other-device', 'game over leaves another run\'s cloud save alone');
+  store.delete(SAVE);
+
+  // a visitor who may not write keeps a device save
+  refuse = true;
+  const visitor = await device();
+  await visitor.evaluate(() => { restart(); started = true; distance = 3000; for (let i = 0; i < 60; i++) update(16); openPause(); resumeLock = 0; saveAndQuit(); });
+  await settle(visitor);
+  const vis = await visitor.evaluate(() => ({ writable: cloudRunWritable, local: !!readLocalRun(), offered: !!pendingRun }));
+  ok(!vis.writable && vis.local && vis.offered, 'a read-only visitor keeps a device save', JSON.stringify(vis));
   await browser.close();
 }
 

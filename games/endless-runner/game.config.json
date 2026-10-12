@@ -1,7 +1,7 @@
 {
   "id": "endless-runner",
   "name": "Turbo Dash",
-  "version": "9.3.0",
+  "version": "9.4.0",
   "description": "A colorful endless runner platformer across ten named difficulty levels. Jump tripwires, ride springs, read portals, dodge crumbling and fake platforms, evolve mid-run, pop coin balloons, keep a pet, and chase a live shared leaderboard.",
   "author": "CaisoGames AI Team",
   "genre": "Endless Runner Platformer",
@@ -24,8 +24,9 @@
       "escape": "Pause / resume; back out of any menu",
       "s": "Shop (from the title, pause, LIFE LOST and game-over screens); JET dive during a run",
       "l": "Leaderboard (same screens)",
-      "n": "Set or change your leaderboard name (on the leaderboard)",
+      "n": "Set or change your leaderboard name (on the leaderboard); NEW RUN on the title when a run is saved (press twice)",
       "e": "End the run (on the pause screen)",
+      "q": "Save & quit (on the pause and LIFE LOST screens)",
       "arrows / WASD": "Steer JET: hold to climb, DOWN/S dive, RIGHT/D boost, LEFT/A brake"
     },
     "mouse": {
@@ -308,7 +309,7 @@
       "pause freezes the world, refuses where there is nothing to pause, and returns from menus to itself",
       "a restart always begins on the play screen, never under a stale overlay"
     ],
-    "checks": 326
+    "checks": 366
   },
   "progression": {
     "type": "in-run evolution",
@@ -539,6 +540,20 @@
       "why": "A 1.5s throttle left a window iOS could reclaim; a small JSON blob to localStorage costs well under a millisecond, so there was nothing to gain from batching and coins to lose.",
       "backup": "Primary and backup keys. The previous copy rotates to backup before each write - only if it parses, so garbage never overwrites the intact copy. A corrupt primary loads from backup and is repaired immediately, not on the next coin."
     }
+  },
+  "savedRun": {
+    "asked": "The game is hard and play time is short: save the game, quit completely, and continue later from the save - stored like the leaderboard is.",
+    "model": "One SUSPEND slot (the roguelike / Nintendo suspend-point model), not free save files. Leaving the game saves the run; CONTINUE restores it and CONSUMES the save. While a run is being played no save exists; one is written only when the player leaves, and deleted when the run ends.",
+    "whyNotSaveFiles": "Free saves let anyone save, die, and load again until every jump is perfect - which would end the shared leaderboard as a contest. Here there is nothing to load twice: die and the save is already gone; leave mid-fall and the exact world puts you back mid-fall.",
+    "exactWorld": "The snapshot is the whole world - platforms, coins, hazards, turrets and their shells, springs, portals, cores, the secret cloud, the player's height and speed, form, fuel tanks, web, missions, run ledger - not a distance to respawn at. Verified by a determinism test: with the same seeded randomness and inputs, a restored run plays on identically to the original for 300 frames, every gameplay field and every random draw matching. Scenery is deliberately left out (it re-rolls when it wraps).",
+    "howToSave": "Nothing to remember: switching apps, locking the phone, closing or reloading the tab all pause the run and save it (visibilitychange, pagehide, beforeunload, freeze). SAVE & QUIT on the pause and LIFE LOST screens does the same on purpose and returns to the title, for a player who wants to SEE it saved.",
+    "howToContinue": "The title shows a big CONTINUE with the run's distance, level, form, lives and 'saved N min ago - on this device / in your account'. A tap anywhere continues: the one mistake the screen makes impossible is starting a new run on top of a saved one. CONTINUE restores the exact world and counts in 3-2-1 (1.2s) before it moves.",
+    "newRun": "NEW RUN needs two taps and ENDS the saved run properly - its score is banked and posted, and the game-over screen shows how it went - rather than throwing it away.",
+    "countdown": "Every resume from the pause screen now counts in 3-2-1 too, because the player is coming back to a frozen frame either way. Leaving the app pauses the run, so coming back is always to the pause screen, never mid-motion.",
+    "cloud": "In the Arena build the save is mirrored to data/users/<the player's id>/turbo - the player's own private area of the artifact's database, readable by nobody else, the owner included. Keyed to the signed-in account, so it survives cleared app data and continues on another device signed in as the same person. Needs the user capability beside db. Written only on the events that already save (never on a timer), one write at a time. Visitors who may not write (the public link) keep a device save; their first refused write turns the mirror off for the visit.",
+    "twoDevices": "A run continued on another device consumes the cloud copy. A copy still in memory on the first device is then forfeited when that device comes back (its save is no longer the one in the cloud), and a mirrored local copy whose cloud copy has gone is not offered again at boot - one run is never played twice. Game over only ever deletes the cloud save of its OWN run.",
+    "fixedOnTheWay": "END RUN called die() with the life-lost cause, and die() ignores non-fall deaths during the post-revive mercy window - so END RUN within ~2s of a spike revive just resumed the run. It now always ends the run.",
+    "storage": "localStorage key turboDash.run.v1; a save is validated for shape before it is offered, and a malformed one is ignored. Infinity (an unscored spike's closest approach) does not survive JSON, so it is restored explicitly - left as null it would have paid a CLOSE CALL nobody earned."
   },
   "flightNeverEndsInAPlunge": {
     "asked": "Make Superman mode forever, because it is very easy to die as soon as the mode goes off.",

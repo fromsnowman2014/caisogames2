@@ -412,6 +412,12 @@ function pressJump() {
   // replayable - but not while the lockout is swallowing the taps that were
   // already in flight when the run ended.
   if (gameOver) { if (resumeLock <= 0) restart(); return; }
+  // A run is saved: tapping the title continues it. Never a silent new run
+  // that leaves the saved one behind.
+  if (!started && pendingRun) { if (resumeLock <= 0) continueRun(); return; }
+  // Counting in: the hold is remembered (so a flier can be holding at GO),
+  // but nothing is buffered into a jump the player did not see happen.
+  if (countdown > 0) { jumpHeld = true; return; }
   started = true;
   jumpHeld = true;
   jumpBuffer = BUFFER_FRAMES;
@@ -511,9 +517,11 @@ function menuShortcut(code) {
   if (code === "KeyS" && canOpen) { openShop();  return true; }
   if (code === "KeyL" && canOpen) { openBoard(); return true; }
   if (code === "KeyN" && uiScreen === "board") { openNameModal(); return true; }
-  if (code === "KeyE" && uiScreen === "paused" && resumeLock <= 0) {
-    uiScreen = "play"; menuFrom = "play"; lives = 1; die(lifePauseCause || "fall");
-    return true;
+  if (code === "KeyE" && uiScreen === "paused" && resumeLock <= 0) { endRunNow(); return true; }
+  if (code === "KeyQ" && (uiScreen === "paused" || (uiScreen === "play" && lifePause)) &&
+      resumeLock <= 0) { saveAndQuit(); return true; }
+  if (code === "KeyN" && uiScreen === "play" && !started && pendingRun) {
+    newRunFromTitle(); return true;
   }
   if (code === "Enter" || code === "NumpadEnter") {
     if (uiScreen === "paused") { closePause(); return true; }
@@ -897,6 +905,8 @@ function playSfx(name) {
     case "shot":   tone(140, 0.14, "sawtooth", 0.22, 60);   break;
     case "web":    tone(1400, 0.08, "square",  0.12, 500);  break;
     case "lowFuel":tone(520, 0.12, "square",   0.16, 380);  break;
+    case "tick":   tone(660, 0.07, "square",   0.12);       break;
+    case "go":     tone(880, 0.16, "square",   0.16, 1320); break;
     case "click":  tone(660, 0.06, "triangle", 0.10);       break;
   }
 }
@@ -2753,6 +2763,305 @@ document.addEventListener("freeze",     () => persist());   // Page Lifecycle AP
 document.addEventListener("visibilitychange", () => { if (document.hidden) persist(); });
 
 /* ---------------------------------------------------------------------------
+   THE SAVED RUN - suspend now, continue later
+   ----------------------------------------------------------------------------
+   The profile (wallet, shop, records) has always saved. The RUN did not: close
+   the app at 3,000m and those 3,000m were gone. For a player with ten minutes
+   at a time, that made a good run impossible to finish.
+
+   THE MODEL is a single SUSPEND slot - the one roguelikes and Nintendo's
+   suspend points use - rather than free save files:
+
+     * Leaving the game saves the run. Nothing to remember: switching apps,
+       locking the phone, closing the tab all pause the run and write it.
+       SAVE & QUIT does the same on purpose, for a player who wants to SEE
+       it saved.
+     * The save is the EXACT world - every platform, coin, hazard, the
+       player's height and speed, the form, the missions - not a distance to
+       respawn at. Continuing puts you precisely where you were, after a
+       short 3-2-1 to get your hands back on.
+     * Continuing CONSUMES the save. While a run is being played there is no
+       save at all; one is written only when you leave, and deleted when the
+       run ends.
+
+   That last rule is what keeps the shared leaderboard honest. Free save
+   files would let anyone save, die, and load again until every jump was
+   perfect. Here there is nothing to load twice: die and the save is already
+   gone; reload mid-fall and the exact world puts you back mid-fall. The
+   snapshot is taken at the moment of leaving, never on a timer, so there is
+   no "a second ago" to rewind to.
+
+   In the cloud build the save is also mirrored to the player's own private
+   area of the artifact's database (see the CLOUD SAVE section), so it
+   survives cleared app data and continues on another device signed in to
+   the same account. A copy left running somewhere else after the run was
+   continued on another device is forfeited, never merged.
+   ------------------------------------------------------------------------ */
+
+const RUN_KEY = "turboDash.run.v1";
+const RUN_VERSION = 1;
+
+let runId = "";            // identity of the run in memory; minted by restart()
+let runSeq = 0;            // bumps on every save of this run
+let localRunSeq = -1;      // seq of this run's save written locally, -1 = none
+let suspendedNow = false;  // a save of the CURRENT state exists; skip rewrites
+let pendingRun = null;     // a saved run offered on the title screen
+let runNotice = "";        // one line on the title ("Run saved", ...)
+let runNoticeFrames = 0;
+let newRunArmed = 0;       // frames left on NEW RUN's "tap again" confirm
+
+function newRunId() {
+  return "r" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+const deepCopy = v => JSON.parse(JSON.stringify(v));
+
+function runIsLive() { return !!(started && !gameOver); }
+
+/** Everything that decides how the run plays on, as plain JSON. */
+function snapshotRun() {
+  return deepCopy({
+    v: RUN_VERSION, runId, seq: runSeq, savedAt: Date.now(),
+    // headline, for the CONTINUE button
+    meters: Math.floor(distance / 10), score: Math.floor(score),
+    level: levelOf(), lives, stageName: stageDef().name,
+    world: { platforms, coins, spikes, powerups, wires, springs, portals,
+             turrets, bullets, secrets, cores },
+    player,
+    s: { scrollSpeed, distance, coinCount, score, combo, comboTimer, airFrames,
+         coyoteFrames, invuln, beatBest, lives, lastLifeWarned,
+         lifePause, lifePauseCause, stunTimer, springArc, flightJumps,
+         shownLevel, stage, coresEarned, flightMeter, flewThisAir,
+         lowFuelWarned, cubUsed, petCoinBonus, heroFuel, jetFuel, jetSpeedMod,
+         web, webCooldown, swingCarry, websLeft, runBanked, runSpent,
+         walletCarry, balloonCoins, balloonsPopped, petX, petY, power,
+         zoneIndex, zoneFade, stats, missions, resumeRamp }
+  });
+}
+
+/** Put a snapshot back into play, exactly. Leaves the world frozen. */
+function applySnapshot(snap) {
+  const d = deepCopy(snap);
+  restart();                     // a clean slate for everything not saved
+  const w = d.world;
+  platforms = w.platforms; coins = w.coins; spikes = w.spikes;
+  powerups = w.powerups; wires = w.wires; springs = w.springs;
+  portals = w.portals; turrets = w.turrets; bullets = w.bullets;
+  secrets = w.secrets; cores = w.cores;
+  // JSON has no Infinity: an unscored spike's "closest so far" comes back as
+  // null, which compares as 0 and would pay a CLOSE CALL nobody earned.
+  for (const sp of spikes) if (typeof sp.near !== "number") sp.near = Infinity;
+  player = d.player;
+
+  const s = d.s;
+  scrollSpeed = s.scrollSpeed; distance = s.distance; coinCount = s.coinCount;
+  score = s.score; combo = s.combo; comboTimer = s.comboTimer;
+  airFrames = s.airFrames; coyoteFrames = s.coyoteFrames; invuln = s.invuln;
+  beatBest = s.beatBest; lives = s.lives; lastLifeWarned = s.lastLifeWarned;
+  lifePause = s.lifePause; lifePauseCause = s.lifePauseCause;
+  stunTimer = s.stunTimer; springArc = s.springArc; flightJumps = s.flightJumps;
+  shownLevel = s.shownLevel; stage = s.stage; coresEarned = s.coresEarned;
+  flightMeter = s.flightMeter; flewThisAir = s.flewThisAir;
+  lowFuelWarned = s.lowFuelWarned; cubUsed = s.cubUsed;
+  petCoinBonus = s.petCoinBonus; heroFuel = s.heroFuel; jetFuel = s.jetFuel;
+  jetSpeedMod = s.jetSpeedMod; web = s.web; webCooldown = s.webCooldown;
+  swingCarry = s.swingCarry; websLeft = s.websLeft; runBanked = s.runBanked;
+  runSpent = s.runSpent; walletCarry = s.walletCarry;
+  balloonCoins = s.balloonCoins; balloonsPopped = s.balloonsPopped;
+  petX = s.petX; petY = s.petY; power = s.power;
+  zoneIndex = s.zoneIndex; zoneFade = s.zoneFade;
+  stats = s.stats; missions = s.missions; resumeRamp = s.resumeRamp;
+
+  runId = d.runId; runSeq = d.seq;
+  started = true; gameOver = false;
+  updateBiome();                 // repaint the zone (no banner: index matches)
+
+  // Saved on the LIFE LOST screen: the life is already spent and the safe
+  // runway already built, so carry on as if CONTINUE had been pressed.
+  if (lifePause) {
+    lifePause = false;
+    invuln = Math.max(invuln, REVIVE_INVULN);
+    resumeRamp = RAMP_FRAMES;
+  }
+}
+
+/* --- the local slot --- */
+
+function writeLocalRun(snap) {
+  try {
+    const body = JSON.stringify(snap);
+    localStorage.setItem(RUN_KEY, body);
+    return localStorage.getItem(RUN_KEY) === body;
+  } catch (e) { return false; }
+}
+function readLocalRun() {
+  try {
+    const raw = localStorage.getItem(RUN_KEY);
+    if (!raw) return null;
+    const v = JSON.parse(raw);
+    return validRun(v) ? v : null;
+  } catch (e) { return null; }
+}
+function clearLocalRun() { try { localStorage.removeItem(RUN_KEY); } catch (e) {} }
+
+/** A save from storage is untrusted until it has the shape we wrote. */
+function validRun(v) {
+  return !!(v && v.v === RUN_VERSION && typeof v.runId === "string" &&
+            v.world && Array.isArray(v.world.platforms) && v.world.platforms.length &&
+            v.player && typeof v.player.y === "number" && v.s &&
+            typeof v.s.distance === "number" && Array.isArray(v.s.missions));
+}
+
+/**
+ * Write the live run to every place it is kept, and return the snapshot
+ * written - or null when there was nowhere to keep it. The local copy is
+ * on disk when this returns; the cloud copy lands asynchronously.
+ */
+let lastSuspendSnap = null;
+function suspendRun() {
+  if (!runIsLive()) return null;
+  if (suspendedNow && lastSuspendSnap) return lastSuspendSnap;   // nothing moved
+  runSeq++;
+  const snap = snapshotRun();
+  const ok = writeLocalRun(snap);
+  localRunSeq = ok ? snap.seq : -1;
+  const queued = cloudWriteRun(snap);
+  if (!ok && !queued) return null;
+  suspendedNow = true;
+  lastSuspendSnap = snap;
+  return snap;
+}
+
+/** The run ended: nothing may be left to continue. */
+function discardRunSaves() {
+  clearLocalRun();
+  localRunSeq = -1;
+  cloudDeleteRun();
+  pendingRun = null;
+  suspendedNow = false;
+}
+
+/**
+ * The page is back and the run is still in memory. Take the save back - the
+ * run is live again - unless it was continued somewhere else while we were
+ * away, in which case this copy is the stale one and is forfeited.
+ */
+function reclaimLiveRun() {
+  if (!runIsLive() || !suspendedNow) return;
+  suspendedNow = false;
+  if (localRunSeq >= 0) {
+    const local = readLocalRun();
+    if (!local || local.runId !== runId || local.seq !== localRunSeq) {
+      forfeitRun(); return;
+    }
+    clearLocalRun();
+    localRunSeq = -1;
+  }
+  cloudReclaimRun();
+}
+
+function forfeitRun() {
+  clearLocalRun();
+  localRunSeq = -1;
+  suspendedNow = false;
+  restart();
+  runNotice = "This run was continued somewhere else";
+  runNoticeFrames = 300;
+}
+
+/** Leaving the page: pause first, so coming back never lands mid-motion. */
+function onLeavingPage() {
+  if (!runIsLive()) return;
+  if (uiScreen === "play" && !lifePause) openPause();
+  suspendRun();
+}
+
+/** SAVE & QUIT: write it, show it was written, and go back to the title. */
+function saveAndQuit() {
+  if (!runIsLive()) return;
+  suspendedNow = false;            // always a fresh write for the explicit save
+  const snap = suspendRun();
+  if (!snap) {
+    runNotice = "Could not save here - saving is blocked in this viewer";
+    runNoticeFrames = 240;
+    playSfx("deny");
+    return;
+  }
+  const where = localRunSeq >= 0 ? "local" : "cloud";
+  localRunSeq = -1;                // nothing is live now to reclaim it
+  suspendedNow = false;
+  restart();                       // the title, over a fresh backdrop
+  pendingRun = deepCopy(snap);
+  pendingRun.src = where;
+  runNotice = "Run saved - continue any time";
+  runNoticeFrames = 240;
+  playSfx("buy");
+}
+
+/** CONTINUE: restore exactly, consume the save, then count the player in. */
+function continueRun() {
+  if (!pendingRun) return;
+  const snap = pendingRun;
+  applySnapshot(snap);
+  pendingRun = null;
+  clearLocalRun();
+  localRunSeq = -1;
+  cloudDeleteRun();
+  suspendedNow = false;
+  uiScreen = "play"; menuFrom = "play";
+  startCountdown();
+}
+
+/**
+ * NEW RUN while a run is saved. The saved run is not thrown away: it is
+ * ended properly, so its score is banked and posted like any other, and the
+ * game-over screen shows how it went. Two taps, because it cannot be undone.
+ */
+function newRunFromTitle() {
+  if (!pendingRun) return;
+  if (newRunArmed <= 0) { newRunArmed = 150; playSfx("deny"); return; }
+  newRunArmed = 0;
+  const snap = pendingRun;
+  applySnapshot(snap);
+  discardRunSaves();
+  endRunNow();
+}
+
+/**
+ * End the live run on purpose and bank it. Always through a "fall": die()
+ * deliberately ignores other causes during the post-revive mercy window and
+ * lets a shield absorb a hit, and END RUN must end the run regardless.
+ */
+function endRunNow() {
+  uiScreen = "play"; menuFrom = "play";
+  lifePause = false;
+  lives = 1;
+  invuln = 0;
+  die("fall");
+}
+
+/* --- the 3-2-1 --- */
+
+const COUNT_BEAT = 24;                    // 0.4s per number
+const COUNTDOWN_FRAMES = COUNT_BEAT * 3;  // 1.2s in all
+let countdown = 0;
+
+function startCountdown() {
+  countdown = COUNTDOWN_FRAMES;
+  jumpBuffer = 0;
+  playSfx("tick");
+}
+
+// Leaving the page saves the run. visibilitychange covers app switching and
+// tab switching; pagehide covers closing and reloading; freeze covers a page
+// the browser parks. Each one that fires is one more chance to land the save.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) onLeavingPage(); else reclaimLiveRun();
+});
+window.addEventListener("pagehide",     onLeavingPage);
+window.addEventListener("beforeunload", onLeavingPage);
+document.addEventListener("freeze",     onLeavingPage);
+
+/* ---------------------------------------------------------------------------
    CLOUD LEADERBOARD
    ----------------------------------------------------------------------------
    Backed by the artifact `db` capability: a shared document store every
@@ -2796,6 +3105,14 @@ async function initCloud() {
     cloudDb = db;
     cloudState = "ready";
     subscribeBoard();
+    // The player's own id, for the private cloud save. Needs the `user`
+    // capability declared beside `db`; without it id() is null and the save
+    // simply stays on this device.
+    try {
+      const user = await window.claude.use("user");
+      cloudUserId = user ? await user.id() : null;
+    } catch (e) { cloudUserId = null; }
+    loadCloudRun();
     // Publish whatever record this browser already holds, so a returning
     // player appears on the board without having to play another run.
     if (save.name && save.bestScore > 0) submitScore(true);
@@ -2873,6 +3190,136 @@ async function submitScore(silent) {
     lastSubmitted = -1;
     if (e && e.code === "revoked") { cloudState = "off"; }
   }
+}
+
+/* --- CLOUD SAVE --------------------------------------------------------------
+   The saved run, mirrored to the player's OWN private area of this artifact's
+   database: data/users/<their id>/turbo. Nobody else can read it - not other
+   players, not the artifact's owner. Keyed to the signed-in account rather
+   than to this browser, so it survives the app's data being cleared and
+   continues on another device signed in as the same person.
+
+   Who gets it: anyone the database lets write - the owner, and people the
+   artifact is shared with as Contributor or above. A visitor on the public
+   link is read-only there; their first refused write turns the mirror off
+   for the visit and the save stays on their device, exactly as in the
+   public build.
+
+   One write at a time to the document (cloudQueue), and only on the events
+   that already save the run - leaving, SAVE & QUIT, the run ending - never
+   on a timer.
+   -------------------------------------------------------------------------- */
+
+let cloudUserId = null;         // the viewer's own id, or null: no cloud save
+let cloudRunWritable = true;    // false after a refused write
+let cloudSaved = null;          // { runId, seq } confirmed in the cloud
+let cloudChain = Promise.resolve();
+
+function cloudRunRef() {
+  if (!cloudDb || cloudState !== "ready" || !cloudUserId || !cloudRunWritable) return null;
+  try { return cloudDb.doc("data/users/" + cloudUserId + "/turbo"); }
+  catch (e) { return null; }
+}
+
+function cloudQueue(fn) {
+  cloudChain = cloudChain.then(fn).catch(e => {
+    const c = e && e.code;
+    if (c === "invalid_argument" || c === "not_granted" || c === "revoked" ||
+        c === "capability_disabled" || c === "capability_removed") {
+      cloudRunWritable = false;
+    }
+  });
+  return cloudChain;
+}
+
+/** Queue the snapshot for the cloud. Returns false when there is no cloud. */
+function cloudWriteRun(snap) {
+  const ref = cloudRunRef();
+  if (!ref) return false;
+  const body = deepCopy(snap);
+  delete body.src; delete body.mirrored;
+  cloudQueue(async () => {
+    await ref.set(body);
+    cloudSaved = { runId: body.runId, seq: body.seq };
+    // Mark the local copy as mirrored. A later boot that finds the local
+    // copy but NOT the cloud one then knows it was continued elsewhere.
+    const local = readLocalRun();
+    if (local && local.runId === body.runId && local.seq === body.seq && !local.mirrored) {
+      local.mirrored = true;
+      writeLocalRun(local);
+    }
+    if (pendingRun && pendingRun.runId === body.runId) pendingRun.mirrored = true;
+  });
+  return true;
+}
+
+/**
+ * Remove the cloud copy of ONE run. Read first: a document holding some
+ * other run (saved on another device that this one has not seen) is not
+ * this run's to delete.
+ */
+function cloudDeleteRun(id) {
+  const ref = cloudRunRef();
+  const target = id || runId;
+  if (!ref) return;
+  cloudQueue(async () => {
+    const snap = await ref.get();
+    const d = snap.exists ? snap.data() : null;
+    if (d && d.runId === target) await ref.delete();
+    if (cloudSaved && cloudSaved.runId === target) cloudSaved = null;
+  });
+}
+
+/** Back on this device with the run in memory: take the cloud copy back. */
+function cloudReclaimRun() {
+  const ref = cloudRunRef();
+  if (!ref) return;
+  const myRun = runId;
+  cloudQueue(async () => {
+    const mine = cloudSaved;
+    if (!mine || mine.runId !== myRun) return;
+    const snap = await ref.get();
+    const d = snap.exists ? snap.data() : null;
+    if (!runIsLive() || runId !== myRun) return;           // moved on meanwhile
+    if (!d || d.runId !== mine.runId || d.seq !== mine.seq) {
+      cloudSaved = null;
+      forfeitRun();                                         // continued elsewhere
+      return;
+    }
+    await ref.delete();
+    cloudSaved = null;
+  });
+}
+
+/** At boot: offer the cloud save if it is newer than this device's. */
+async function loadCloudRun() {
+  const ref = cloudRunRef();
+  if (!ref) return;
+  try {
+    const snap = await ref.get();
+    const local = readLocalRun();
+    if (!snap.exists) {
+      // A local save that had reached the cloud, with no cloud copy now:
+      // it was continued (and so consumed) on another device.
+      if (local && local.mirrored && !started) {
+        clearLocalRun();
+        if (pendingRun && pendingRun.runId === local.runId) {
+          pendingRun = null;
+          runNotice = "Your saved run was continued on another device";
+          runNoticeFrames = 300;
+        }
+      }
+      return;
+    }
+    const d = deepCopy(snap.data());
+    if (!validRun(d)) return;
+    cloudSaved = { runId: d.runId, seq: d.seq };
+    if (started) return;           // a run already began here; offered next visit
+    const newer = !pendingRun || d.savedAt > pendingRun.savedAt ||
+                  (d.runId === pendingRun.runId && d.seq > pendingRun.seq);
+    if (newer) { pendingRun = d; pendingRun.src = "cloud"; }
+    pendingRun.mirrored = pendingRun.runId === d.runId;
+  } catch (e) { /* the device copy stands */ }
 }
 
 /** This player's position in the visible window, or -1 if outside it. */
@@ -3855,6 +4302,8 @@ function die(cause) {
 
   lives = 0;
   gameOver = true;
+  // Nothing to continue: a run that has ended cannot be loaded again.
+  discardRunSaves();
   resumeLock = RESUME_LOCK;
   player.isAlive = false;
   deathCause = cause;
@@ -5082,7 +5531,9 @@ function closePause() {
   if (resumeLock > 0) return;
   uiScreen = "play";
   jumpBuffer = 0;                // the resuming press must not become a jump
-  playSfx("click");
+  // 3-2-1 before the world moves again - the same re-entry a continued run
+  // gets, because the player is coming back to a frozen frame either way.
+  startCountdown();
 }
 
 /* --- Shop ---------------------------------------------------------------- */
@@ -5332,6 +5783,11 @@ function drawUI() {
   // live HUD is hidden entirely rather than bleeding through behind it.
   if (gameOver) { withUiSpace(() => drawGameOver(meters)); return; }
 
+  // A saved run on offer: the HUD would describe the fresh backdrop (0m,
+  // RUNNER, full hearts) right behind a button describing the saved run.
+  // Two contradicting sets of numbers on one screen - so only the title speaks.
+  if (!started && pendingRun) { withUiSpace(drawTitle); return; }
+
   // --- Score (the headline number) ---
   outlinedText(Math.floor(score).toLocaleString(), 18, 44,
                "bold 36px 'Trebuchet MS', sans-serif", "#FFFFFF");
@@ -5449,6 +5905,8 @@ function drawUI() {
   // Queued announcements - zone, level and evolution, one at a time.
   drawBanner();
 
+  if (countdown > 0 && uiScreen === "play") drawCountdown();
+
   if (!started) withUiSpace(drawTitle);
   if (lifePause && uiScreen === "play" && !gameOver) withUiSpace(drawLifeLost);
 }
@@ -5501,13 +5959,16 @@ function drawLifeLost() {
         { accent: "#2B6E7F", border: "#7FD4E6", font: 22, disabled: locked, key: "SPACE" });
   uiBtn(W / 2 + 5, 360, 210, 54, "SHOP", openShop,
         { accent: "#2F6B3A", border: "#50FA7B", font: 22, key: "S" });
+  // Losing a life is the most natural moment to stop for today.
+  uiBtn(W / 2 - 105, 426, 210, 44, "SAVE & QUIT", saveAndQuit,
+        { accent: "#5B4A16", border: "#FFE066", font: 18, disabled: locked, key: "Q" });
 
   if (!locked) {
     const pulse = 0.7 + Math.sin(elapsed * 5) * 0.3;
     ctx.globalAlpha = pulse;
     outlinedText(isTouch() ? "press CONTINUE when you are ready"
                            : "press CONTINUE, or SPACE",
-                 W / 2, 446, "bold 17px 'Trebuchet MS', sans-serif", "#9FB6C9", "center", 3);
+                 W / 2, 500, "bold 17px 'Trebuchet MS', sans-serif", "#9FB6C9", "center", 3);
     ctx.globalAlpha = 1;
   }
 }
@@ -5544,24 +6005,24 @@ function drawPaused() {
                "bold 19px 'Trebuchet MS', sans-serif", C.coin, "center", 3.5);
 
   const locked = resumeLock > 0;
+  // The two things a paused player most wants sit side by side: carry on,
+  // or stop here and come back later.
   uiBtn(W / 2 - 215, 360, 210, 54, locked ? "WAIT" : "RESUME", closePause,
         { accent: "#2B6E7F", border: "#7FD4E6", font: 22, disabled: locked, key: "SPACE" });
-  uiBtn(W / 2 + 5, 360, 210, 54, "SHOP", openShop,
-        { accent: "#2F6B3A", border: "#50FA7B", font: 22, key: "S" });
-  uiBtn(W / 2 - 215, 426, 210, 46, "LEADERBOARD", openBoard,
-        { accent: "#2B4E7F", border: "#7FB4E6", font: 18, key: "L" });
+  uiBtn(W / 2 + 5, 360, 210, 54, "SAVE & QUIT", saveAndQuit,
+        { accent: "#5B4A16", border: "#FFE066", font: 20, disabled: locked, key: "Q" });
+  uiBtn(W / 2 - 215, 424, 210, 44, "SHOP", openShop,
+        { accent: "#2F6B3A", border: "#50FA7B", font: 18, key: "S" });
+  uiBtn(W / 2 + 5, 424, 210, 44, "LEADERBOARD", openBoard,
+        { accent: "#2B4E7F", border: "#7FB4E6", font: 17, key: "L" });
   // Ending here banks the run properly rather than leaving the player to die
-  // on purpose to get their score onto the board.
-  uiBtn(W / 2 + 5, 426, 210, 46, "END RUN", () => {
-    uiScreen = "play"; menuFrom = "play";
-    lives = 1;
-    die(lifePauseCause || "fall");
-  }, { accent: "#6B2F2F", border: "#FF6B6B", font: 18, key: "E" });
+  // on purpose to get their score onto the board. Smaller and apart: it is
+  // the one choice on this screen that cannot be undone.
+  uiBtn(W / 2 - 105, 482, 210, 40, "END RUN", endRunNow,
+        { accent: "#6B2F2F", border: "#FF6B6B", font: 16, key: "E" });
 
-  if (!locked) {
-    outlinedText(isTouch() ? "tap RESUME to carry on" : "press RESUME, or Escape",
-                 W / 2, 506, "bold 16px 'Trebuchet MS', sans-serif", "#9FB6C9", "center", 3);
-  }
+  outlinedText("Leaving the game saves this run too - you can always come back to it",
+               W / 2, 552, "bold 14px 'Trebuchet MS', sans-serif", "#9FB6C9", "center", 3);
 }
 
 function drawFocusMission() {
@@ -5643,9 +6104,93 @@ function drawPowerHud() {
   }
 }
 
+/** "just now" / "12 min ago" / "3 h ago" / "2 days ago". */
+function agoText(ts) {
+  const m = Math.max(0, Math.floor((Date.now() - (ts || 0)) / 60000));
+  if (m < 1) return "just now";
+  if (m < 60) return m + " min ago";
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + " h ago";
+  const d = Math.floor(h / 24);
+  return d === 1 ? "yesterday" : d + " days ago";
+}
+
+/** A one-line confirmation above the title band ("Run saved", ...). */
+function drawRunNotice() {
+  if (runNoticeFrames <= 0 || !runNotice) return;
+  ctx.globalAlpha = Math.min(1, runNoticeFrames / 30);
+  outlinedText(runNotice, W / 2, 178, "bold 20px 'Trebuchet MS', sans-serif",
+               runNotice.indexOf("saved") >= 0 ? "#50FA7B" : "#FFE066", "center", 3.5);
+  ctx.globalAlpha = 1;
+}
+
+/**
+ * The title when a run is waiting. CONTINUE is the big, obvious thing, and a
+ * tap anywhere means it too: the one mistake this screen must make
+ * impossible is starting a new run on top of a saved one by accident.
+ */
+function drawTitleWithSave() {
+  const pr = pendingRun;
+  ctx.fillStyle = "rgba(0,0,0,0.5)";
+  ctx.fillRect(-6000, 200, 12000, 270);
+  outlinedText("TURBO DASH", W / 2, 256,
+               "bold 50px 'Trebuchet MS', sans-serif", "#FFE066", "center");
+
+  uiBtn(W / 2 - 220, 284, 440, 62, "CONTINUE", continueRun,
+        { accent: "#2F6B3A", border: "#50FA7B", font: 28, key: "SPACE" });
+
+  const hearts = "\u2665".repeat(Math.max(0, Math.min(MAX_LIVES, pr.lives || 0)));
+  outlinedText(Number(pr.meters || 0).toLocaleString() + "m   ·   LV " + (pr.level || 1) +
+               "   ·   " + (pr.stageName || "RUNNER") + "   ·   " + hearts,
+               W / 2, 374, "bold 18px 'Trebuchet MS', sans-serif", "#FFFFFF", "center", 3);
+  outlinedText("saved " + agoText(pr.savedAt) +
+               (pr.mirrored || pr.src === "cloud" ? "  ·  in your account" : "  ·  on this device"),
+               W / 2, 396, "bold 14px 'Trebuchet MS', sans-serif", "#9FB6C9", "center", 3);
+
+  const armed = newRunArmed > 0;
+  uiBtn(W / 2 - 220, 412, 140, 44, armed ? "TAP AGAIN" : "NEW RUN", newRunFromTitle,
+        armed ? { accent: "#6B2F2F", border: "#FF6B6B", font: 16, key: "N" }
+              : { accent: "rgba(20,32,44,0.88)", border: "#9FB6C9", font: 16, key: "N" });
+  uiBtn(W / 2 - 70, 412, 140, 44, "SHOP", openShop,
+        { accent: "#2F6B3A", border: "#50FA7B", font: 16, key: "S" });
+  uiBtn(W / 2 + 80, 412, 140, 44, "LEADERBOARD", openBoard,
+        { accent: "#2B4E7F", border: "#7FB4E6", font: 14, key: "L" });
+  if (armed) {
+    outlinedText("A new run ends the saved one - its score is kept",
+                 W / 2, 488, "bold 15px 'Trebuchet MS', sans-serif", "#FF9F5A", "center", 3);
+  } else if (save.name) {
+    outlinedText("Playing as " + save.name, W / 2, 488,
+                 "bold 16px 'Trebuchet MS', sans-serif", "#9FB6C9", "center", 3);
+  }
+  if (!isTouch()) {
+    outlinedText("SPACE continue   ·   N new run   ·   S shop   ·   L leaderboard",
+                 W / 2, 516, "bold 14px 'Trebuchet MS', sans-serif", "#9FB6C9", "center", 3);
+  }
+  drawRunNotice();
+}
+
+/** The 3-2-1, big and centred, each number popping in and settling. */
+function drawCountdown() {
+  const n = Math.ceil(countdown / COUNT_BEAT);
+  const t = (countdown % COUNT_BEAT) / COUNT_BEAT;     // 1 -> 0 across a beat
+  const pop = 1 + Math.max(0, t - 0.6) * 1.2;
+  ctx.save();
+  ctx.translate(W / 2, H * 0.42);
+  ctx.scale(pop, pop);
+  ctx.globalAlpha = 0.55 + 0.45 * Math.min(1, t * 3 + 0.2);
+  outlinedText(String(n), 0, 0, "bold 96px 'Trebuchet MS', sans-serif",
+               n === 1 ? "#50FA7B" : "#FFFFFF", "center", 6);
+  ctx.restore();
+  ctx.globalAlpha = 1;
+  outlinedText("GET READY", W / 2, H * 0.42 + 44,
+               "bold 20px 'Trebuchet MS', sans-serif", "#B9E6FF", "center", 3);
+}
+
 function drawTitle() {
+  if (pendingRun) { drawTitleWithSave(); return; }
   ctx.fillStyle = "rgba(0,0,0,0.45)";
   ctx.fillRect(-6000, 200, 12000, 190);      // a band across the whole screen
+  drawRunNotice();
   outlinedText("TURBO DASH", W / 2, 265,
                "bold 54px 'Trebuchet MS', sans-serif", "#FFE066", "center");
 
@@ -5811,6 +6356,8 @@ function update(dt) {
   // pause screen - so counting it anywhere after those returns would freeze it
   // at full and the screens could never be dismissed at all.
   if (resumeLock > 0) resumeLock--;
+  if (runNoticeFrames > 0) runNoticeFrames--;
+  if (newRunArmed > 0) newRunArmed--;
 
   // A menu pauses the run rather than letting it play on unseen behind the
   // overlay - coming back to a corpse after buying a hat would be absurd.
@@ -5823,6 +6370,17 @@ function update(dt) {
     particles = particles.filter(q => q.life > 0);
     popups = popups.filter(q => q.life > 0);
     if (shakeAmount > 0) { shakeAmount *= 0.86; if (shakeAmount < 0.3) shakeAmount = 0; }
+    return;
+  }
+
+  // Counting in after a resume or a continue: the world holds still.
+  if (countdown > 0) {
+    const beat = Math.ceil(countdown / COUNT_BEAT);
+    countdown--;
+    for (const q of particles) { q.x += q.vx; q.y += q.vy; q.vy += 0.15; q.life--; }
+    particles = particles.filter(q => q.life > 0);
+    if (countdown === 0) { addPopup("GO!", "#50FA7B"); playSfx("go"); }
+    else if (Math.ceil(countdown / COUNT_BEAT) !== beat) playSfx("tick");
     return;
   }
 
@@ -6030,6 +6588,8 @@ function restart() {
   // menu screen survives the restart and the next run starts underneath an
   // overlay it has no way to dismiss.
   uiScreen = "play"; menuFrom = "play"; resumeLock = 0;
+  runId = newRunId(); runSeq = 0; lastSuspendSnap = null;
+  countdown = 0; newRunArmed = 0;
   wires = []; stunTimer = 0;
   springs = []; springArc = false;
   portals = [];
@@ -6079,6 +6639,10 @@ function boot() {
     probeStorage();
     loadSave();
     restart();
+    // A run left suspended on this device is offered on the title. (The
+    // cloud copy, if newer, replaces this offer once the cloud answers.)
+    pendingRun = readLocalRun();
+    if (pendingRun) pendingRun.src = "local";
     resizeCanvas();
     render();                    // paint frame zero synchronously
 
