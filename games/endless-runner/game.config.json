@@ -1,0 +1,584 @@
+{
+  "id": "endless-runner",
+  "name": "Turbo Dash",
+  "version": "9.4.0",
+  "description": "A colorful endless runner platformer across ten named difficulty levels. Jump tripwires, ride springs, read portals, dodge crumbling and fake platforms, evolve mid-run, pop coin balloons, keep a pet, and chase a live shared leaderboard.",
+  "author": "CaisoGames AI Team",
+  "genre": "Endless Runner Platformer",
+  "tags": [
+    "endless",
+    "runner",
+    "platformer",
+    "procedural",
+    "2D",
+    "kids"
+  ],
+  "entryPoint": "src/index.html",
+  "buildCommand": null,
+  "controls": {
+    "keyboard": {
+      "space": "Jump (hold for a higher jump); start; resume; restart",
+      "up": "Jump (hold for a higher jump)",
+      "w": "Jump (hold for a higher jump)",
+      "enter": "Start / resume / restart / continue",
+      "escape": "Pause / resume; back out of any menu",
+      "s": "Shop (from the title, pause, LIFE LOST and game-over screens); JET dive during a run",
+      "l": "Leaderboard (same screens)",
+      "n": "Set or change your leaderboard name (on the leaderboard); NEW RUN on the title when a run is saved (press twice)",
+      "e": "End the run (on the pause screen)",
+      "q": "Save & quit (on the pause and LIFE LOST screens)",
+      "arrows / WASD": "Steer JET: hold to climb, DOWN/S dive, RIGHT/D boost, LEFT/A brake"
+    },
+    "mouse": {
+      "click": "Jump (hold for a higher jump); buttons; drag to steer JET",
+      "hover": "Buttons lift and the cursor becomes a pointer; every button shows its key as a chip"
+    },
+    "touch": {
+      "enabled": true,
+      "description": "Tap anywhere to jump, hold for a higher jump, drag to steer JET. Pause button in the top-right. Both orientations, full screen."
+    }
+  },
+  "viewport": {
+    "strategy": "Anchored world, elastic viewport",
+    "world": "600 logical px tall, always. Ground at 450, ceiling at 18 - every measured physics figure in this file depends on those and none of them change.",
+    "landscape": "Logical height 600; width follows the screen's aspect, clamped 800..1400. A wider phone sees further down the track.",
+    "portrait": "Logical width 600; height follows the aspect (up to 1500). The ground is anchored at 70% of the screen with sky above and earth below. 600 wide, not 800, so the character is the same size in both orientations on the same phone; the cost is 450px of look-ahead instead of 650 (0.75s at top speed, 1.5s at the start).",
+    "hud": "Drawn in screen space and pinned to the real edges.",
+    "menus": "Laid out once for 800x600 and drawn through a uniform scale-to-fit transform (withUiSpace): 1.0 in landscape, 0.75 in portrait. Buttons remember the transform so taps map back through it.",
+    "hidpi": "Backing store at device resolution (capped 2x); the game was blurry on every phone before.",
+    "measured": "iPhone 17 Pro: 402x680 CSS px used of 402x681 in portrait, 756x351 of 756x352 in landscape - no letterbox either way; character 27px / 23px. Before: a 390x292 box in the middle of the landscape screen, and a 'rotate your device' nag in portrait.",
+    "turret": "The pop range is clamped to the visible track (min(500, W - 180)), and the shell slowed 5.5 -> 4.5 so the pop-to-impact window stays above 30 frames on every screen at top speed."
+  },
+  "features": [
+    "Three-stage in-run evolution: RUNNER -> WINGED (double jump) -> BLAZE (triple jump + glide)",
+    "Evolution Cores earned by completing missions, collected on the track ahead",
+    "Air jumps set velocity rather than adding it, so every one is a reliable recovery",
+    "Each successive air jump is weaker, keeping the height ceiling bounded",
+    "Gap sizes scale with each form's MEASURED reach, so evolving never trivialises the level",
+    "Stage score multipliers (x1.0 / x1.25 / x1.6) reward evolving early",
+    "Form resets on death - losing a BLAZE run is the strongest restart pressure in the game",
+    "Coyote time and jump buffering so deaths always feel earned",
+    "Coin combo multiplier up to x8, plus close-call and big-air bonuses",
+    "Three rotating missions per run with per-mission difficulty tiers",
+    "Persistent records, rank and lifetime coins via localStorage",
+    "Power-ups: magnet, shield, and a temporary extra air jump",
+    "Four crossfading biomes: Meadow, Sunset Ridge, Midnight, Frost Peaks",
+    "Screen shake, hit-stop, speed lines and WebAudio sound with no asset files",
+    "Full touch support with multi-finger hold tracking and iOS audio unlock",
+    "Boot screen that explains itself if a sandboxed viewer blocks its scripts",
+    "Shop with three slots: hats, back packs and trails, bought with coins earned by playing",
+    "Strong items are gated on a distance RECORD as well as price - price alone gates time, not skill",
+    "Item effects chosen so none can inflate a score: the coin bonus pays the wallet only, and the slow pack trades scoring rate for reaction time",
+    "Cloud leaderboard over the artifact db capability: live top 20, one row per player",
+    "Name prompt via a real HTML input, so phones get their keyboard and accessibility",
+    "The game is complete without the cloud - the board falls back to this device's best",
+    "Three lives (max five), so one fall no longer ends the run",
+    "Reviving COSTS an evolution stage and the coin combo, which is what keeps scores comparable",
+    "Rare heart pickups that appear more often the closer you are to losing",
+    "Final-life tension: a pulsing red vignette kept to the screen edges so hazards stay readable",
+    "Super Suit: hold to fly from the opening second on a 12s tank that refills on the ground - permanent for the run, and no flight ever ends in a plunge",
+    "Ten named difficulty levels, each announcing the hazard it introduces",
+    "Crumbling platforms (level 3+) that shake, crack and collapse 0.8s after you land",
+    "Fake platforms (level 5+) placed as DECOYS in wide gaps, never on the route itself",
+    "Fakes carry a visible tell (translucent and drifting) so reading them is a skill, not a memory test",
+    "Coin balloons: a high, off-line jump that pays 60 coins straight into the wallet",
+    "Pets: Coin Pup (wallet-only coin gathering), Scout Bird (marks fakes), Spark Cub (spares one revive penalty)",
+    "A single banner queue, so zone, level and evolution announcements never overwrite each other",
+    "Fourth evolution HERO: 4 jumps plus a rechargeable flight burst, earned by completing all three missions in one run",
+    "HERO's flight refills only while running on the ground, so hovering forever is impossible by construction",
+    "The wallet total and a savings goal are shown during play, on the game-over screen and in the shop",
+    "Coins are banked the moment they are collected, so abandoning a run mid-way (app switch, closed tab) loses nothing",
+    "A storage self-test at boot; if saving is blocked the title screen says so instead of failing silently",
+    "Losing a life freezes the run on a LIFE LOST screen until a tap, with CONTINUE and SHOP offered there",
+    "Turrets (level 8+): a hatch that rises into a cannon, fires ONE knee-high shot back down the track, and sinks; only the shell hurts, and any jump clears it",
+    "The secret cloud: a near-transparent cloud along the top of the world, moving at WORLD speed rather than cloud speed, collected only on the third jump of one flight; pays coins, an instant HERO form, a free (record-eligible) shop item, or every life back",
+    "Fifth evolution JET: drag to fly - climb, dive, boost or brake - on a five-second tank that refills only on the ground, with jet flames and a gauge beside the character",
+    "Sixth evolution SPIDER: hold to jump then web-swing, release to drop with the swing's speed, press again to web again; three webs per flight, refilled by landing, and the web lets go by itself before it could swing you backward",
+    "Finished missions are re-rolled during the run, so there are always three live goals and the five cores to SPIDER are reachable",
+    "Every change is written to storage at once - no throttle, no unsaved window",
+    "Two on-disk copies: the previous state is rotated to a backup before each write, and a corrupt primary is recovered from it and repaired on the spot",
+    "Writes fire on pagehide, beforeunload, blur, freeze and visibilitychange, plus a 1s heartbeat while playing",
+    "A tick lights beside the wallet on every successful save, so saving is something the player can watch happen",
+    "Tripwires (level 2+): the first hazard, and the only one that never kills - run into one and you stumble for 0.37s with no jump",
+    "A wire is only placed where the platform runs on for the whole stun distance at top speed, so a stumble can never end at a pit",
+    "Springs (level 4+): a high, slow arc under halved gravity - long enough to see the landing and steer with an air jump",
+    "Portals (level 7+): both rings drawn so the exit is readable first; a warp pays +150 but skips the loot between and spends your air jumps",
+    "Skipped portal distance is never credited to distance, level, biome or speed",
+    "A 0.45s input lockout when the run stops, so the taps already in flight at the moment of death cannot dismiss the screen",
+    "LIFE LOST accepts only its CONTINUE button - never a stray tap - and shows WAIT while locked",
+    "A pause button in the top-right corner, with a PAUSED screen offering RESUME, SHOP, LEADERBOARD and END RUN",
+    "Escape toggles pause; a menu opened from the pause returns to the pause rather than into a running game"
+  ],
+  "stats": {
+    "playtime": "1-5 minutes per run",
+    "difficulty": "Easy to Hard (progressive)",
+    "replayability": "High"
+  },
+  "mechanics": {
+    "primary": [
+      "Auto-running character",
+      "Multi-jump physics with coyote time and jump buffering",
+      "Mission-driven evolution"
+    ],
+    "secondary": [
+      "Coin combo chaining",
+      "Spike near-misses",
+      "Power-up collection",
+      "Stage-3 gliding",
+      "Coin economy and cosmetics",
+      "Leaderboard chasing",
+      "Lives and revives",
+      "Suit flight budgeting",
+      "Hazard reading",
+      "Mid-run purchasing",
+      "Pet companions",
+      "Tripwire timing",
+      "Spring arcs",
+      "Portal reading"
+    ],
+    "unique": [
+      "Missions pay out a visible ability rather than an abstract score bonus",
+      "A power curve inside a single run: weak, strong, unstoppable",
+      "Form is lost on death, so loss aversion drives the restart",
+      "Gaps sized from each form's measured physics, not an estimate",
+      "Shop perks are designed so buying power cannot buy leaderboard position",
+      "A revive costs a form and the combo, so three lives inflate scores x1.78 rather than the naive x3",
+      "Flight is a total budget per run, making WHEN to spend it the decision rather than whether to hold",
+      "Fake platforms are opt-in bait beside the route, so a trap is never a coin flip",
+      "Mid-run shopping is a pickup rather than a menu, because a menu would stop the run",
+      "Pets may ease the run or fatten the wallet, but never inflate the score",
+      "Flight is reachable by skill (HERO) as well as by purchase, keeping the game's rule that strong powers are earned",
+      "HERO's short rechargeable burst and the Super Suit's large one-shot budget stay distinct, so buying the suit still buys something",
+      "The stumble is the only non-lethal hazard, so it is the first one taught",
+      "A spring's slowness is its fairness: the arc is long enough to react to",
+      "A portal shows its exit before you commit, and costs air jumps and loot, so it is a decision rather than a gift",
+      "The stop screens are guarded against in-flight input, because a runner is played by tapping constantly",
+      "LIFE LOST is a decision screen so it needs a deliberate button; game over is a restart screen so tap-to-restart survives the lockout"
+    ]
+  },
+  "difficulty": {
+    "type": "ten_named_levels",
+    "span": "300m per level, capped at level 10",
+    "principle": "One new hazard per level, never two, so there is always a stretch to learn each.",
+    "levels": [
+      {
+        "n": 1,
+        "name": "WARM UP",
+        "adds": ""
+      },
+      {
+        "n": 2,
+        "name": "TRIPWIRE",
+        "adds": "Tripwires - jump them or stumble"
+      },
+      {
+        "n": 3,
+        "name": "CRUMBLE",
+        "adds": "Crumbling platforms"
+      },
+      {
+        "n": 4,
+        "name": "SPRINGBOARD",
+        "adds": "Springs - a long, slow leap"
+      },
+      {
+        "n": 5,
+        "name": "SPIKE ALLEY",
+        "adds": "More spikes"
+      },
+      {
+        "n": 6,
+        "name": "MIRAGE",
+        "adds": "Fake platforms"
+      },
+      {
+        "n": 7,
+        "name": "WARP ZONE",
+        "adds": "Portals - read the exit first"
+      },
+      {
+        "n": 8,
+        "name": "TURRET ROW",
+        "adds": "Turrets - jump the shot"
+      },
+      {
+        "n": 9,
+        "name": "GAUNTLET",
+        "adds": "Tighter gaps, everything faster"
+      },
+      {
+        "n": 10,
+        "name": "TURBO HELL",
+        "adds": "Maximum difficulty"
+      }
+    ],
+    "biomes": [
+      "Meadow",
+      "Sunset Ridge",
+      "Midnight",
+      "Frost Peaks"
+    ]
+  },
+  "createdAt": "2026-09-08",
+  "updatedAt": "2026-09-14",
+  "status": "playable",
+  "technicalDetails": {
+    "engine": "Custom HTML5 Canvas",
+    "physics": "Custom (no libraries)",
+    "renderer": "2D Canvas",
+    "audioSupport": true,
+    "mobileSupport": true,
+    "offlineSupport": true,
+    "requiresJavaScript": true,
+    "knownLimitations": [
+      "Must be opened in a real browser or from a web address. In-app file previews (the sheet with an x and a share button) sandbox the page and block its scripts via CSP, which fires no error and does not trigger <noscript>; the game detects this and shows an explanation instead of a blank canvas.",
+      "Leaderboard identity is a per-browser id with a self-declared name. There is no verified user identity available to the page, so it is a friendly board rather than an anti-cheat system."
+    ]
+  },
+  "credits": {
+    "design": "Claude (Design & Code)",
+    "code": "Claude (Code Team)"
+  },
+  "testing": {
+    "harness": "games/endless-runner/test (Playwright 1.63.0, pinned)",
+    "run": "npm run setup && npm test",
+    "engines": [
+      "WebKit (Safari engine)",
+      "Chromium"
+    ],
+    "devices": [
+      "iPhone 17 Pro / iOS 26 (portrait + landscape)",
+      "iPhone 16 Pro",
+      "iPhone SE",
+      "Pixel 7",
+      "Desktop 900x760"
+    ],
+    "coverage": [
+      "renders on every target device",
+      "survives blocked localStorage",
+      "survives missing AudioContext",
+      "explains itself when a sandboxed preview blocks its scripts",
+      "evolution stages, air-jump physics and glide",
+      "a missed Evolution Core is re-offered rather than lost",
+      "hardest generated gap stays well inside each form's measured reach",
+      "shop economy: pricing, ownership, equip, and no double purchase",
+      "money alone cannot unlock the record-gated items",
+      "coin bonus reaches the wallet but never the score",
+      "menus pause the run instead of letting it play on unseen",
+      "cloud leaderboard subscribes, submits one row, and sanitises other viewers' data",
+      "the game is complete with no cloud at all",
+      "tapping the name field is NOT preventDefault-ed (the bug that made it untypable)",
+      "the game surface still cancels touches, so the page cannot scroll or zoom",
+      "W and SPACE reach the name field while the prompt is open, and jump again once it closes",
+      "focus happens synchronously inside the gesture, which is what raises the iOS keyboard",
+      "typing a real name through the browser's own input pipeline, on touch and mouse",
+      "a player outside the visible rows still has a findable, pinned rank",
+      "a fall spends a life rather than ending the run, and revives on solid ground",
+      "reviving costs an evolution stage and the combo, and never falls below the base form",
+      "hearts restore a life, are capped, and get likelier only when the player is in trouble",
+      "suit flight: holding lifts, releasing drops, the tank drains only while held",
+      "flight cannot leave the top of the world or farm the big-air bonus",
+      "the suit burns out into the pack below it and normal jumping returns",
+      "ten levels, capped, each introducing one hazard and never two",
+      "fakes never catch the player and reveal themselves on contact",
+      "crumblers hold first, warn, then collapse and hold nothing",
+      "the real route is traversable ignoring every fake platform",
+      "a coin balloon pays the wallet, never the score, and never costs coins",
+      "walletBefore + gain - spent equals walletAfter for every run, including mid-run shopping",
+      "coins survive a reload, an abandoned run, and a store that throws on every access",
+      "pets never add to score, and the Cub spares one revive penalty per run",
+      "zone, level and evolution banners queue instead of overlapping",
+      "coins accumulate across runs and survive a reload",
+      "the savings goal names the cheapest remaining item and never dangles a record-locked one",
+      "HERO grants four jumps and a burst that refills only on the ground",
+      "HERO flight cannot hover forever, and the suit's finite budget is spent before it",
+      "gaps at HERO are sized for jumps alone, so an empty tank is never a death sentence",
+      "coins bank on pickup and the game-over total never double-counts",
+      "an abandoned run keeps its coins across a reload",
+      "losing a life freezes the run; tap or SPACE resumes without jumping and with a mercy window",
+      "the shop opens from the pause and returns to it; the final death skips the pause",
+      "each coin and purchase is on disk immediately; unchanged state is not rewritten",
+      "the previous state rotates to a backup, and garbage is never rotated into it",
+      "a corrupt primary recovers from the backup and is repaired at once",
+      "pagehide, beforeunload, blur, freeze and the 1s heartbeat each write",
+      "tripwires stumble without costing a life, block jumping only for the stun, and always leave recovery runway",
+      "springs fire only on a descending landing, arc high and slow under the ceiling, and yield to an air jump",
+      "portals resolve an exit above a real platform, pay the bonus without crediting distance, spend air jumps, and can be declined",
+      "in-flight taps cannot dismiss LIFE LOST or instantly restart after game over",
+      "only CONTINUE resumes from LIFE LOST; a stray tap never does, before or after the lockout",
+      "pause freezes the world, refuses where there is nothing to pause, and returns from menus to itself",
+      "a restart always begins on the play screen, never under a stale overlay"
+    ],
+    "checks": 366
+  },
+  "progression": {
+    "type": "in-run evolution",
+    "stages": [
+      {
+        "stage": 1,
+        "name": "RUNNER",
+        "grants": "Single jump",
+        "scoreMultiplier": 1.0
+      },
+      {
+        "stage": 2,
+        "name": "WINGED",
+        "grants": "Double jump",
+        "scoreMultiplier": 1.25,
+        "earnedBy": "Complete one mission during the run, then collect the Evolution Core"
+      },
+      {
+        "stage": 3,
+        "name": "BLAZE",
+        "grants": "Triple jump + hold to glide",
+        "scoreMultiplier": 1.6,
+        "earnedBy": "Complete a second mission, then collect the next Core"
+      },
+      {
+        "stage": 4,
+        "name": "HERO",
+        "grants": "Four jumps + rechargeable flight burst",
+        "scoreMultiplier": 2.0,
+        "earnedBy": "Complete a third mission in the same run, then collect the Core"
+      },
+      {
+        "stage": 5,
+        "name": "JET",
+        "grants": "Drag to fly: climb, dive, boost (+45% scroll) or brake (-30%). 5s tank, refills only on the ground. Jumps return when the tank is dry.",
+        "scoreMultiplier": 2.4,
+        "earnedBy": "A fourth mission in the same run (missions re-roll), then the Core",
+        "control": "Touch: drag from wherever the finger went down; a held tap without movement climbs. Keyboard: hold to climb, DOWN/S dive, RIGHT/D boost, LEFT/A brake.",
+        "gaps": "Sized for HERO's jumps, never for flight - an empty tank is never a death sentence."
+      },
+      {
+        "stage": 6,
+        "name": "SPIDER",
+        "grants": "Hold to jump, keep holding and a web fires at the apex to a point 150px ahead and 170px up; swing under it. Release to drop with the swing's momentum. Press again in the air for another web. Three webs per flight, refilled by landing. No air jumps.",
+        "scoreMultiplier": 2.8,
+        "earnedBy": "A fifth mission in the same run, then the Core",
+        "physics": "A real pendulum in world space, position-based; its horizontal velocity IS the scroll for that frame, so the world rushes past at the bottom of the swing. The web lets go by itself the instant the swing would carry you backward.",
+        "measured": "One swing = 3.25x RUNNER's reach at the same speed; two chained = 4.92x; three = 6.56x. Gaps use 2.95 (HERO's), so a single swing clears the hardest gap with ~10% to spare.",
+        "whyABudget": "Without the three-web cap a held button chained swings along the ceiling forever. Every flying form here keeps the rule that hovering forever is impossible by construction."
+      }
+    ],
+    "note": "Evolution is per-run and resets on death. Missions are re-rolled as they finish, so the climb to SPIDER takes five missions in one run. Mission tiers persist, so cores get harder to earn over time.",
+    "naming": "The two new forms are deliberately named JET and SPIDER rather than after any trademarked character: the game is published publicly. The mechanics - drag flight with a fuel bar, web swinging - are the part that was asked for and they are all here."
+  },
+  "shop": {
+    "currency": "Coins collected while running, banked into a wallet at the end of each run",
+    "slots": [
+      "hat",
+      "rocket",
+      "pet",
+      "trail"
+    ],
+    "designRule": "Nothing sold may inflate a score. Coin bonuses pay the wallet only; the slow pack reduces scoring rate as well as difficulty; the strongest two items additionally require a distance record, because a price tag gates patience rather than skill.",
+    "items": [
+      {
+        "slot": "hat",
+        "id": "cap",
+        "price": 120,
+        "effect": "cosmetic"
+      },
+      {
+        "slot": "hat",
+        "id": "phones",
+        "price": 380,
+        "effect": "magnet lasts 50% longer"
+      },
+      {
+        "slot": "hat",
+        "id": "crown",
+        "price": 950,
+        "effect": "+25% coins to wallet, score unchanged"
+      },
+      {
+        "slot": "hat",
+        "id": "halo",
+        "price": 1800,
+        "needBest": 1200,
+        "effect": "start each run with a shield"
+      },
+      {
+        "slot": "rocket",
+        "id": "mini",
+        "price": 700,
+        "effect": "world 8% slower - and scoring 8% slower with it"
+      },
+      {
+        "slot": "rocket",
+        "id": "turbo",
+        "price": 2400,
+        "needBest": 2500,
+        "effect": "start each run already WINGED"
+      },
+      {
+        "slot": "trail",
+        "id": "spark",
+        "price": 200,
+        "effect": "cosmetic"
+      },
+      {
+        "slot": "trail",
+        "id": "flame",
+        "price": 500,
+        "effect": "cosmetic"
+      },
+      {
+        "slot": "trail",
+        "id": "rain",
+        "price": 900,
+        "effect": "cosmetic"
+      },
+      {
+        "slot": "pet",
+        "id": "pup",
+        "price": 800,
+        "effect": "Gathers coins; they pay the wallet, never the score"
+      },
+      {
+        "slot": "pet",
+        "id": "bird",
+        "price": 1400,
+        "needBest": 1500,
+        "effect": "Marks fake platforms early"
+      },
+      {
+        "slot": "pet",
+        "id": "cub",
+        "price": 2600,
+        "needBest": 2200,
+        "effect": "Once a run, a revive costs no evolution stage"
+      },
+      {
+        "slot": "rocket",
+        "id": "cape",
+        "price": 2600,
+        "needBest": 3000,
+        "effect": "Hold to fly from the opening second; 12s per run, then a Turbo Pack"
+      }
+    ]
+  },
+  "leaderboard": {
+    "backend": "Artifact `db` capability (shared realtime document store)",
+    "shape": "One document per player keyed by a per-browser id; live top 20 via orderBy(score,desc).limit(20).onSnapshot",
+    "identity": "Self-declared name in localStorage. No verified user identity is available to the page, so this is a friendly board, not anti-cheat.",
+    "degradation": "Outside the artifact viewer there is no window.claude at all, so the board falls back to this device's own best and the game is otherwise unchanged.",
+    "constraint": "The db capability cannot be combined with public sharing, so the cloud build is organization-internal. A separate public build ships without db.",
+    "untrustedInput": "Rows are written by other viewers: names are stripped of control characters and capped, and numbers are coerced before display."
+  },
+  "builds": {
+    "script": "node games/endless-runner/build-artifact.mjs",
+    "outputs": [
+      {
+        "file": "turbo-dash.html",
+        "title": "Turbo Dash",
+        "capabilities": "none",
+        "sharing": "public link OK"
+      },
+      {
+        "file": "turbo-dash-cloud.html",
+        "title": "Turbo Dash Arena",
+        "capabilities": "db",
+        "sharing": "organization-internal only"
+      }
+    ]
+  },
+  "lives": {
+    "start": 3,
+    "max": 5,
+    "reviveCost": "One evolution stage and the entire coin combo",
+    "measuredInflation": "x1.78 average score vs a single life, against a naive expectation of x3",
+    "hearts": "Rare pickups. Spawn chance is 0 at full health and rises to ~9% per platform on the last life."
+  },
+  "coinBalloon": {
+    "pays": 60,
+    "costs": 0,
+    "form": "A balloon on the track, floating off the safe line, reached with a deliberate jump",
+    "wasPreviously": "A MERCHANT balloon that SOLD a power-up for 60 coins out of the wallet.",
+    "whyItChanged": "The wallet had two jobs at once - long-term savings for the shop, and the merchant's in-run currency - and they fought. A player who met two balloons in one run earned 78 coins and finished with 42 FEWER than they started with, while the end screen reported '+78 this run'. Nothing was lost and nothing was broken; the game spent the savings and never said so, which reads exactly like a bug. For children, who play to watch a number go up, a mechanic that eats the number is worse than no mechanic.",
+    "whatWasKept": "The decision. It still floats high and off the line, so reaching it is a real jump with a landing to think about - but the stake is risk, which is free, instead of savings, which accumulate slowly.",
+    "whatWasDropped": "Selling powers. Shields, magnets and wings already fall free from the world and hearts have their own pickup that scales with trouble, so the merchant was a second, worse door to things that already had one. powerChance rose from 0.05/0.11 to 0.07/0.14 to carry its share.",
+    "balanceRule": "Balloon coins pay the WALLET and never the SCORE, exactly like the Crown and the Pup. The Crown's +25% applies. Counted apart from stats.runCoins so a lucky balloon cannot finish a 'collect ten coins' mission.",
+    "whyFasterCoinsAreSafe": "Leaderboard position is protected by needBest - a distance RECORD - not by price. Price gates patience; records gate skill. Making coins flow faster speeds up the shop without weakening the thing the economy exists to protect.",
+    "measuredIncome": "Per run, assuming every coin is caught: 1000m ~118, 3000m ~286, 6000m ~648. At the ~40% catch rate a real 6000m run showed, that is roughly 4x the old income - and the old figure was before the merchant took 60 per balloon back out."
+  },
+  "turret": {
+    "level": 8,
+    "range": "Pops when the player is within 500px; hatch light blinks red from 800px",
+    "timing": "18 frames to rise (the cue), one shot, 8 frames up, 18 to sink. From the pop to impact at top speed: 32 frames (~0.53s at 10px/frame, ~0.6s at typical speeds).",
+    "shot": "Knee height, 5.5px/frame on top of the scroll. Any jump clears it; a shield absorbs it; hitting it costs a life like a spike.",
+    "placement": "Ground platforms only, past the landing zone, 110px clear of spikes, wires and springs. Never on floating slabs.",
+    "whyOnlyTheShellHurts": "A solid block rising out of the floor under a committed jump would be an unreadable death. The cannon body is scenery; it has usually sunk again by the time you reach it.",
+    "alsoFixed": "A revive slid platforms, coins, spikes, pickups and cores forward but left wires, springs and portals behind, so a revive could put a tripwire in mid-air. Every layer moves together now."
+  },
+  "secretCloud": {
+    "where": "y=44, the summit of the world. Spawns 2.2% per platform once the player has a third jump (BLAZE+), one at a time.",
+    "tell": "It scrolls at world speed (1.0x) while real clouds drift at 0.2x. Alpha 0.18-0.34 in the biome's cloud colour, no glow, no outline, no bob. Nobody is told; it can only be noticed.",
+    "whyTheThirdJump": "A held double jump already reaches the ceiling (measured: player top 26px vs ceiling 18px), so height gates nothing. Counting jumps in one flight - ground + 2 air = 3 - makes it a move you have to know, and a flying form cannot stumble into it.",
+    "prizes": "coins 300 (w40), instant HERO (w22), a free shop item the player's RECORD already qualifies them for (w22), 1000 coins (w8), all lives (w8). Coins are wallet-only. HERO is per-run. Fallbacks to coins when a prize would be useless.",
+    "whyNot6000Coins": "6000 is ~40% of the whole shop in one touch, and a good BLAZE run meets several clouds. 300/1000 keep it a jackpot without collapsing the economy; the free item and the instant HERO are the prizes that feel big."
+  },
+  "portalExits": {
+    "measuredBefore": "35-41% of generator-placed portals ever resolved an exit, per level. The rest were drawn and inert - a ring you ran into that did nothing.",
+    "fix": "Two parts. resolvePortalExits accepts any real platform that OVERLAPS the warp window with 80px of landing room, not only one that starts inside it (that alone reached ~70%). And generatePlatform, when it is building the platform that lands in an unresolved portal's window, stretches it to guarantee that room and never makes it a crumbler.",
+    "measuredAfter": "100% at levels 7-10.",
+    "safetyNet": "A portal whose window has been built past with no exit is removed before the player reaches it - checked AFTER resolution, never before."
+  },
+  "walletLedger": {
+    "invariant": "walletBefore + runWalletGain - runWalletSpent === walletAfter, asserted at finishRun",
+    "display": "WALLET <total>  (+<gained>, -<spent> spent this run), with the balloon count shown beside the run's other statistics",
+    "whySpendingIsTracked": "The shop is reachable mid-run from the pause and LIFE LOST screens, so a purchase is the one thing left that can take coins out during a run. It is reported rather than hidden - reporting earnings alone is what produced the original confusion.",
+    "blockedStorage": "When a write cannot be read back, the game-over screen says so where the wallet is read, taking that slot from the best-score reminder."
+  },
+  "economy": {
+    "walletCarriesBetweenRuns": true,
+    "note": "Earlier fix made the running total visible. This one fixes the remaining loss: coins were only credited in finishRun() on the final death, so any run abandoned mid-way lost them. They now bank on pickup and the profile is flushed whenever the page is hidden or unloaded.",
+    "verified": "Seven coins picked up, then the page hidden and unloaded without the run ending: wallet is 507 after a reload (500 + 7).",
+    "persistence": {
+      "policy": "synchronous write on every mutation",
+      "why": "A 1.5s throttle left a window iOS could reclaim; a small JSON blob to localStorage costs well under a millisecond, so there was nothing to gain from batching and coins to lose.",
+      "backup": "Primary and backup keys. The previous copy rotates to backup before each write - only if it parses, so garbage never overwrites the intact copy. A corrupt primary loads from backup and is repaired immediately, not on the next coin."
+    }
+  },
+  "savedRun": {
+    "asked": "The game is hard and play time is short: save the game, quit completely, and continue later from the save - stored like the leaderboard is.",
+    "model": "One SUSPEND slot (the roguelike / Nintendo suspend-point model), not free save files. Leaving the game saves the run; CONTINUE restores it and CONSUMES the save. While a run is being played no save exists; one is written only when the player leaves, and deleted when the run ends.",
+    "whyNotSaveFiles": "Free saves let anyone save, die, and load again until every jump is perfect - which would end the shared leaderboard as a contest. Here there is nothing to load twice: die and the save is already gone; leave mid-fall and the exact world puts you back mid-fall.",
+    "exactWorld": "The snapshot is the whole world - platforms, coins, hazards, turrets and their shells, springs, portals, cores, the secret cloud, the player's height and speed, form, fuel tanks, web, missions, run ledger - not a distance to respawn at. Verified by a determinism test: with the same seeded randomness and inputs, a restored run plays on identically to the original for 300 frames, every gameplay field and every random draw matching. Scenery is deliberately left out (it re-rolls when it wraps).",
+    "howToSave": "Nothing to remember: switching apps, locking the phone, closing or reloading the tab all pause the run and save it (visibilitychange, pagehide, beforeunload, freeze). SAVE & QUIT on the pause and LIFE LOST screens does the same on purpose and returns to the title, for a player who wants to SEE it saved.",
+    "howToContinue": "The title shows a big CONTINUE with the run's distance, level, form, lives and 'saved N min ago - on this device / in your account'. A tap anywhere continues: the one mistake the screen makes impossible is starting a new run on top of a saved one. CONTINUE restores the exact world and counts in 3-2-1 (1.2s) before it moves.",
+    "newRun": "NEW RUN needs two taps and ENDS the saved run properly - its score is banked and posted, and the game-over screen shows how it went - rather than throwing it away.",
+    "countdown": "Every resume from the pause screen now counts in 3-2-1 too, because the player is coming back to a frozen frame either way. Leaving the app pauses the run, so coming back is always to the pause screen, never mid-motion.",
+    "cloud": "In the Arena build the save is mirrored to data/users/<the player's id>/turbo - the player's own private area of the artifact's database, readable by nobody else, the owner included. Keyed to the signed-in account, so it survives cleared app data and continues on another device signed in as the same person. Needs the user capability beside db. Written only on the events that already save (never on a timer), one write at a time. Visitors who may not write (the public link) keep a device save; their first refused write turns the mirror off for the visit.",
+    "twoDevices": "A run continued on another device consumes the cloud copy. A copy still in memory on the first device is then forfeited when that device comes back (its save is no longer the one in the cloud), and a mirrored local copy whose cloud copy has gone is not offered again at boot - one run is never played twice. Game over only ever deletes the cloud save of its OWN run.",
+    "fixedOnTheWay": "END RUN called die() with the life-lost cause, and die() ignores non-fall deaths during the post-revive mercy window - so END RUN within ~2s of a spike revive just resumed the run. It now always ends the run.",
+    "storage": "localStorage key turboDash.run.v1; a save is validated for shape before it is offered, and a malformed one is ignored. Infinity (an unscored spike's closest approach) does not survive JSON, so it is restored explicitly - left as null it would have paid a CLOSE CALL nobody earned."
+  },
+  "flightNeverEndsInAPlunge": {
+    "asked": "Make Superman mode forever, because it is very easy to die as soon as the mode goes off.",
+    "diagnosis": "Every flight source ended at the frame its tank hit zero - by definition mid-air, usually over the gap being crossed - with a full-speed fall and no warning. The Super Suit was worst: 12s once per run, then burned out for good.",
+    "whyNotInfinite": "The gaps are the game, and the shared leaderboard would go to whoever held the button longest. Every flying form keeps the rule that hovering forever is impossible by construction.",
+    "fix": "The suit is permanent for the run - its tank refills on the ground (1.2/frame, empty to full in ~10s), the same shape HERO and JET have. When ANY tank runs dry in the air, holding glides the player down (0.3x fall gravity, capped 3.2px/frame) with their air jumps intact to steer - whatever their form. The tank warns at a quarter with a beep and TANK LOW, once per flight.",
+    "whatTheSuitStillBuys": "A 12s tank from second one, versus HERO's 3.5s burst earned by three missions."
+  },
+  "safeResume": {
+    "problemMeasured": "A revive gave a median 28 frames (0.47s) of ground before the first edge or hazard, in every one of 60 trials from HERO; a spike death did not relocate at all. The gaps already built ahead were sized for the form just lost. The world ran at full speed from frame one.",
+    "fix": "The road is rebuilt. Everything behind the player is kept, everything ahead is cleared, and a flat hazard-free ground runway is laid from under their feet for RUNWAY_FRAMES (100, ~1.7s at the current speed, never under 700px). Beyond it the generator builds fresh, for the form the player has NOW. On CONTINUE the world eases from 55% of speed back to full over 90 frames (1.5s). The runway wears a pale stripe.",
+    "measuredAfter": "Median 108-127 frames of clear ground at full speed, worst case 100, across fall, spike and turret deaths from BLAZE, HERO and JET. Gaps beyond the runway never exceed what the new form is normally given.",
+    "costsUnchanged": "The form is still lost, the combo still wiped, distance neither credited nor refunded. A pending core is re-offered, not lost. Only the landing is made fair.",
+    "whyNotACountdown": "A 3-2-1 adds three seconds of waiting to every life lost; the ramp gives the same re-entry with none of the wait."
+  },
+  "lifePause": {
+    "when": "Every life lost except the last",
+    "rationale": "Losing a life is the one moment a runner can pause without breaking flow - momentum is already zero. A mid-run menu would interrupt; a pause at death interrupts nothing. It gives the player a beat to register the loss and a natural point to shop.",
+    "resume": "Tap anywhere, SPACE, or CONTINUE. The resuming input is consumed so it cannot double as a jump; hit-stop is cleared so the world moves at once.",
+    "guard": "A 0.45s lockout swallows input that was already in flight, and only CONTINUE resumes. The button greys to WAIT while locked - a control that silently ignores you reads as broken."
+  },
+  "pause": {
+    "button": "Top-right corner of the HUD, live only during a run",
+    "screen": "Score so far, distance, level, lives and wallet, with RESUME / SHOP / LEADERBOARD / END RUN",
+    "rationale": "Implemented as a uiScreen rather than a new flag, because update() already freezes the world for any screen other than play - the pause reuses the stop condition the shop and leaderboard rely on.",
+    "endRun": "Banks the run properly, so a player who wants to stop is not made to die on purpose to post a score."
+  }
+}

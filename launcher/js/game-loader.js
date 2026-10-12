@@ -41,7 +41,7 @@ export class GameLoader {
     async discoverGames() {
         // For now, hardcode known games
         // In production, this would be: fetch('/api/games/list')
-        return ['ski-caiso', 'feeding-caiso'];
+        return ['ski-caiso', 'feeding-caiso', 'endless-runner'];
     }
 
     /**
@@ -85,12 +85,14 @@ export class GameLoader {
     createDefaultConfig(gameId) {
         const gameNames = {
             'ski-caiso': 'Ski Caiso',
-            'feeding-caiso': 'Feeding Caiso'
+            'feeding-caiso': 'Feeding Caiso',
+            'endless-runner': 'Turbo Dash'
         };
 
         const descriptions = {
             'ski-caiso': 'Endless 2D skiing game with procedural terrain and rhythmic flow mechanics',
-            'feeding-caiso': 'Feed the hungry Caiso character in this fun arcade game'
+            'feeding-caiso': 'Feed the hungry Caiso character in this fun arcade game',
+            'endless-runner': 'Auto-run, leap gaps and grab coins in a colorful endless platformer'
         };
 
         return {

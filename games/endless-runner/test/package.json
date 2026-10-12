@@ -1,0 +1,12 @@
+{
+  "name": "turbo-dash-tests",
+  "private": true,
+  "description": "Browser tests for Turbo Dash. WebKit matters here: it is Safari's engine, and the iOS-only faults this suite covers do not reproduce on Chromium.",
+  "scripts": {
+    "setup": "playwright install webkit chromium && playwright install-deps webkit",
+    "test": "node run.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}
