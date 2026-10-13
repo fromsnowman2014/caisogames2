@@ -1,7 +1,7 @@
 {
   "id": "endless-runner",
   "name": "Turbo Dash",
-  "version": "9.4.0",
+  "version": "9.5.0",
   "description": "A colorful endless runner platformer across ten named difficulty levels. Jump tripwires, ride springs, read portals, dodge crumbling and fake platforms, evolve mid-run, pop coin balloons, keep a pet, and chase a live shared leaderboard.",
   "author": "CaisoGames AI Team",
   "genre": "Endless Runner Platformer",
@@ -183,8 +183,8 @@
       },
       {
         "n": 5,
-        "name": "SPIKE ALLEY",
-        "adds": "More spikes"
+        "name": "BOMB FIELD",
+        "adds": "Bombs - they blow your coins away"
       },
       {
         "n": 6,
@@ -309,7 +309,7 @@
       "pause freezes the world, refuses where there is nothing to pause, and returns from menus to itself",
       "a restart always begins on the play screen, never under a stale overlay"
     ],
-    "checks": 366
+    "checks": 385
   },
   "progression": {
     "type": "in-run evolution",
@@ -540,6 +540,16 @@
       "why": "A 1.5s throttle left a window iOS could reclaim; a small JSON blob to localStorage costs well under a millisecond, so there was nothing to gain from batching and coins to lose.",
       "backup": "Primary and backup keys. The previous copy rotates to backup before each write - only if it parses, so garbage never overwrites the intact copy. A corrupt primary loads from backup and is repaired immediately, not on the next coin."
     }
+  },
+  "bombs": {
+    "asked": "A bomb obstacle: stepping on it does not take a life, but the coins collected so far all blow away; stepping on one with no coins left kills. And turret shells should burst coins in their path like fireworks, so the player sees the shell coming.",
+    "rule": "Sonic's ring rule. A bomb takes the coins in the POCKET - the counter beside the coin icon, the coins caught this run - and throws them out as pieces you can chase for 2.5s. With an empty pocket a bomb costs a life, like a spike (so the safe-runway resume applies). The counter turns red and pulses once bombs exist and the pocket is empty.",
+    "whatIsAtRisk": "Only this run's coins, and never more than the wallet holds - savings from earlier runs are never touched (draining savings unannounced is what made the merchant balloon read as a bug). The loss gets its own line on the end screen: '-N to bombs'. Each scattered piece carries its share of the pocket and of the wallet coins, so catching it back restores exactly that.",
+    "scatter": "Pieces are thrown FORWARD with the run (scrollSpeed x0.9 plus a fan). Thrown at rest they all streamed away behind a player who never moves - a 'catch them back' that could not happen; that was caught by a test. Measured: running on without jumping wins back a median 43% on flat ground (it was 67% before tuning, too soft for the pocket to ever really empty); jumping wins more, gaps lose more.",
+    "fairness": "After a blast the character flickers and is safe for 1.25s, so a second bomb close behind cannot take the shield and the life in one moment. Bombs sit past the landing zone on wide ground platforms only, never on the platform right after another bomb, clear of spikes, wires, springs and turrets, and never with coins dangled over them (they take the spike slot, so every spike clearance rule covers them). A shield absorbs a bomb; a jump clears one.",
+    "shells": "A turret shell pops every coin in its path into a bright firework (white flash, ring of colour that droops) - the player loses those coins, but a row bursting right to left is the clearest warning of where the shell is. Coins well above the shell's line survive. A shell that reaches a bomb sets it off harmlessly where it stands: the turret clears the road.",
+    "level": "Level 5 is now BOMB FIELD (it used to announce 'more spikes', which still happens at 1400m regardless).",
+    "save": "Bombs, scattered coins and the run's loss are part of the suspend-save snapshot; the determinism test covers them."
   },
   "savedRun": {
     "asked": "The game is hard and play time is short: save the game, quit completely, and continue later from the save - stored like the leaderboard is.",

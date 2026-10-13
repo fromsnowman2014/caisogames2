@@ -923,6 +923,8 @@ function playSfx(name) {
     case "web":    tone(1400, 0.08, "square",  0.12, 500);  break;
     case "lowFuel":tone(520, 0.12, "square",   0.16, 380);  break;
     case "tick":   tone(660, 0.07, "square",   0.12);       break;
+    case "boom":   tone(120, 0.42, "sawtooth", 0.24, 40);   break;
+    case "pop":    tone(1300, 0.06, "square",  0.08, 2000); break;
     case "go":     tone(880, 0.16, "square",   0.16, 1320); break;
     case "click":  tone(660, 0.06, "triangle", 0.10);       break;
   }
@@ -989,7 +991,9 @@ const LEVELS = [
   { n: 2,  name: "TRIPWIRE",    adds: "Tripwires - jump them or stumble" },
   { n: 3,  name: "CRUMBLE",     adds: "Crumbling platforms" },
   { n: 4,  name: "SPRINGBOARD", adds: "Springs - a long, slow leap" },
-  { n: 5,  name: "SPIKE ALLEY", adds: "More spikes" },
+  // Bombs arrive once a run has usually banked a pocketful of coins to lose.
+  // (The spike increase this level used to announce still happens, at 1400m.)
+  { n: 5,  name: "BOMB FIELD",  adds: "Bombs - they blow your coins away" },
   { n: 6,  name: "MIRAGE",      adds: "Fake platforms" },
   { n: 7,  name: "WARP ZONE",   adds: "Portals - read the exit first" },
   { n: 8,  name: "TURRET ROW",  adds: "Turrets - jump the shot" },
@@ -1365,7 +1369,10 @@ function warpThrough(pt) {
     for (const q of portals)   { q.inX -= dx; if (q.outX !== null) q.outX -= dx; }
     for (const tu of turrets)  tu.x -= dx;
     for (const b of bullets)   b.x -= dx;
+    for (const bm of bombs)    bm.x -= dx;
+    for (const sc of scatter)  sc.x -= dx;
   }
+  bombs = bombs.filter(bm => Math.abs(bm.x - PLAYER_X) > 70);
   // No air jumps out the far side - you read the exit, now you live with it.
   // A spike DIRECTLY under the exit would be an unreadable death, so that one
   // thing is cleared; everything else you could see stays.
@@ -1498,6 +1505,171 @@ function grantSecret(sc) {
 }
 
 /* ---------------------------------------------------------------------------
+   BOMBS (level 5+)
+   ----------------------------------------------------------------------------
+   A bomb on the track. Touch it and it goes off - but it does not take a
+   life. It takes the coins in your POCKET: the number beside the coin icon,
+   the coins caught this run. They burst out of you and scatter across the
+   ground, and for a couple of seconds you can grab some of them back. Touch
+   a bomb with an empty pocket, and there is nothing left to shield you: that
+   one costs a life, like a spike.
+
+   This is Sonic's ring rule, and it was chosen because it is one of the best
+   tested risk mechanics in the genre: coins stop being only a number to
+   collect and become a SHIELD you are carrying, so a fat pocket makes you
+   brave and an empty one makes you careful. The scatter is what keeps it
+   from feeling like a fine - the loss arrives as a shower of coins you can
+   chase, not a figure that silently goes down.
+
+   Two limits keep it fair, both learned the hard way in this game:
+
+     * Only the POCKET is ever at risk, never savings from earlier runs. A
+       bomb takes at most what this run put in, and at most what the wallet
+       actually holds. The end screen reports it on its own line ("-12 lost
+       to bombs"), because coins vanishing without a word is what made the
+       merchant balloon read as a bug.
+     * After a blast the character flickers and nothing can hurt it for a
+       beat, so a second bomb close behind cannot take the shield and then
+       the life in one moment. The generator also never puts a bomb on the
+       platform right after one.
+
+   When the pocket is empty the coin counter turns red - the player always
+   knows what the next bomb will cost.
+   ------------------------------------------------------------------------ */
+
+const BOMB_R       = 13;    // body radius; it sits on the surface
+const BOMB_GRACE   = 75;    // flicker frames after a blast (~1.25s)
+const SCATTER_MAX  = 30;    // coin pieces a blast throws out, at most
+const SCATTER_LIFE = 150;   // 2.5s to catch them back
+const SCATTER_ARM  = 14;    // not catchable for the first beat of the burst
+
+let bombs;                  // { x, y, fuse, blown }  x = centre, y = surface
+let scatter;                // { x, y, vx, vy, life, value, paid }
+let runLost = 0;            // wallet coins this run lost to bombs, net of catches
+let bombGap = 0;            // platforms to skip after one carrying a bomb
+let popCooldown = 0;        // throttles the firework pop sound
+
+function bombChance() {
+  if (levelOf() < 5) return 0;
+  return Math.min(0.20, 0.12 + (levelT() - 0.44) * 0.15);
+}
+
+/** A bomb going off: flash, fire, smoke. Pure feedback. */
+function explodeAt(x, y, big) {
+  for (let i = 0; i < (big ? 34 : 22); i++) {
+    const a = Math.random() * Math.PI * 2, sp = rand(1.5, big ? 7 : 5);
+    particles.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 1.5,
+      life: randInt(14, 32), size: rand(3, big ? 8 : 6),
+      color: i % 4 === 0 ? "#FFF3B0" : i % 4 === 1 ? "#FF6D00" : i % 4 === 2 ? "#FFB300" : "#5A5A5A" });
+  }
+  playSfx("boom");
+  shake(big ? 14 : 6);
+}
+
+/** Coins meeting a shell: a small firework, so the shell's path is visible. */
+function spawnFirework(x, y) {
+  // Big and bright on purpose: this is a WARNING the player has to notice at
+  // a glance mid-run, not a garnish. A white flash, then a ring of colour
+  // that droops like a real firework.
+  const cols = ["#FFD700", "#FF79C6", "#8BE9FD", "#50FA7B", "#FFFFFF", "#FF9F5A"];
+  particles.push({ x, y, vx: 0, vy: -0.15, life: 7, size: 13, color: "#FFFFFF" });
+  for (let i = 0; i < 20; i++) {
+    const a = (i / 20) * Math.PI * 2, sp = rand(3, 5.5);
+    particles.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 0.8,
+      life: randInt(20, 34), size: rand(3, 5.5), color: cols[i % cols.length] });
+  }
+  if (popCooldown <= 0) { playSfx("pop"); popCooldown = 4; }
+}
+
+/** The player touched a bomb. */
+function hitBomb(b) {
+  b.blown = true;
+  explodeAt(b.x, b.y - BOMB_R, true);
+  hitStop = 6;
+
+  if (power.shield > 0) {
+    power.shield = 0;
+    invuln = 90;
+    playSfx("shieldBreak");
+    addPopup("SHIELD SAVED YOU!", "#8BE9FD");
+    return;
+  }
+  // Nothing in the pocket: nothing to shield you.
+  if (coinCount <= 0) { die("bomb"); return; }
+
+  const pocket = coinCount;
+  // Only this run's coins, and never more than the wallet holds (a player who
+  // spent their savings in the shop mid-run cannot be taken below zero).
+  const taken = Math.min(pocket, Math.max(0, save.wallet));
+  save.wallet -= taken;
+  runLost += taken;
+  coinCount = 0;
+  combo = 0; comboTimer = 0;
+  persist();
+
+  // Throw the pocket out as pieces you can chase. The pieces carry the
+  // pocket between them (value) and the wallet coins between them (paid), so
+  // catching one gives back exactly its share of both.
+  //
+  // They are thrown FORWARD with the run. The world scrolls left under a
+  // player who never moves, so coins thrown at rest would all stream away
+  // behind them, out of reach - a "catch them back" that never happens. Thrown
+  // at running speed plus a spread, they arc ahead, land, and lie on the
+  // ground in the player's path: some are caught simply by running on, some
+  // need a jump, some fall into the gap and are gone.
+  const n = Math.min(SCATTER_MAX, pocket);
+  const cx = PLAYER_X + PLAYER_W / 2, cy = player.y + PLAYER_H / 2;
+  for (let i = 0; i < n; i++) {
+    const a = -Math.PI * (0.12 + 0.76 * (i + Math.random() * 0.6) / n);  // a fan, upward
+    const sp = rand(4.5, 9);
+    scatter.push({ x: cx, y: cy, vx: scrollSpeed * 0.9 + Math.cos(a) * sp, vy: Math.sin(a) * sp,
+                   life: SCATTER_LIFE,
+                   value: Math.floor(pocket / n) + (i < pocket % n ? 1 : 0),
+                   paid:  Math.floor(taken / n)  + (i < taken % n ? 1 : 0) });
+  }
+  invuln = BOMB_GRACE;
+  addPopup("-" + pocket + " COINS!", "#FF6B6B");
+}
+
+/** Scattered coins: fly, fall, bounce on whatever is under them. */
+function updateScatter() {
+  if (popCooldown > 0) popCooldown--;
+  for (const s of scatter) {
+    s.life--;
+    s.vy += 0.38;
+    s.x += s.vx;                 // scrollWorld adds the world's own motion
+    s.vx *= 0.99;
+    const prevY = s.y;
+    s.y += s.vy;
+    if (s.vy >= 0) {
+      for (const q of platforms) {
+        if (q.fake || q.fallen) continue;
+        const top = q.y - 9;
+        if (s.x >= q.x && s.x <= q.x + q.width && prevY <= top + 1 && s.y >= top) {
+          s.y = top;
+          // A couple of bounces, then it lies still ON the ground - which,
+          // with the world scrolling, means it comes back toward the player.
+          if (Math.abs(s.vy) > 2) { s.vy = -Math.abs(s.vy) * 0.45; s.vx *= 0.5; }
+          else { s.vy = 0; s.vx = 0; }
+          break;
+        }
+      }
+    }
+  }
+}
+
+/** Catch a scattered coin back: its share of the pocket and the wallet. */
+function catchScatter(s) {
+  s.life = 0;
+  coinCount += s.value;
+  save.wallet += s.paid;
+  runLost -= s.paid;
+  spawnSparkle(s.x, s.y);
+  if (popCooldown <= 0) { playSfx("coin"); popCooldown = 3; }
+  persistSoon();
+}
+
+/* ---------------------------------------------------------------------------
    TURRETS (level 8+)
    ----------------------------------------------------------------------------
    A hatch in the ground. As you approach, a cannon rises out of it, fires ONE
@@ -1570,12 +1742,36 @@ function updateTurrets() {
   for (const b of bullets) {
     b.x += b.vx;                 // scrollWorld adds the world's own motion
     if (b.flash > 0) b.flash--;
+    // Coins in the shell's path pop into fireworks. The player loses them,
+    // but a row of coins bursting one after another, right to left, is the
+    // clearest possible warning of where the shell is and how fast it comes.
+    for (const c of coins) {
+      if (c.collected || Math.abs(c.x - b.x) > 16 || Math.abs(c.y - b.y) > 30) continue;
+      c.collected = true;
+      spawnFirework(c.x, c.y);
+    }
+    for (const sc of scatter) {
+      if (sc.life <= 0 || Math.abs(sc.x - b.x) > 16 || Math.abs(sc.y - b.y) > 30) continue;
+      sc.life = 0;
+      spawnFirework(sc.x, sc.y);
+    }
+    // A bomb in the shell's path goes off where it stands - out of the
+    // player's way, and no harm to them. The turret clears the road.
+    for (const bm of bombs) {
+      if (bm.blown) continue;
+      if (Math.abs(bm.x - b.x) < BOMB_R + BULLET_R && Math.abs(bm.y - BOMB_R - b.y) < BOMB_R + BULLET_R + 6) {
+        bm.blown = true;
+        b.spent = true;
+        explodeAt(bm.x, bm.y - BOMB_R, false);
+      }
+    }
     if (Math.floor(elapsed * 60) % 2 === 0) {
       particles.push({ x: b.x + BULLET_R, y: b.y + rand(-3, 3),
         vx: rand(1, 2.5), vy: rand(-0.4, 0.4),
         life: randInt(6, 12), size: rand(2, 4), color: "#FF9F5A" });
     }
   }
+  bullets = bullets.filter(b => !b.spent);
 }
 
 /** 0 hidden .. 1 fully up, for drawing. */
@@ -1618,7 +1814,8 @@ function generatePlatform() {
   const floatChance = levelOf() < 2 ? 0.08 : Math.min(0.42, 0.22 + levelT() * 0.25);
   const isFloating = Math.random() < floatChance;
 
-  let y, width, type, wantsSpike = false, wantsWire = false;
+  let y, width, type, wantsSpike = false, wantsWire = false, wantsBomb = false;
+  if (bombGap > 0) bombGap--;
   if (isFloating) {
     type  = "floating";
     // Level 9 starts shaving the landing area itself.
@@ -1634,11 +1831,14 @@ function generatePlatform() {
     // make it extra wide, so the spike still fits comfortably PAST the
     // landing zone (see decoratePlatform) instead of ambushing the player.
     wantsSpike = Math.random() < spikeChance();
+    // A bomb takes a spike's slot and the same wide platform, and never sits
+    // on the platform right after another one.
+    wantsBomb = !wantsSpike && bombGap <= 0 && Math.random() < bombChance();
     // A wire needs the landing zone PLUS the whole stun runway after it, which
     // no ordinary platform is long enough to hold. So the platform is decided
     // first and built to fit - the same rule spikes already follow.
-    wantsWire = !wantsSpike && Math.random() < wireChance();
-    width = wantsSpike ? rand(340, 430)
+    wantsWire = !wantsSpike && !wantsBomb && Math.random() < wireChance();
+    width = (wantsSpike || wantsBomb) ? rand(340, 430)
           : wantsWire  ? rand(LANDING_ZONE + STUN_RUNWAY + 40, LANDING_ZONE + STUN_RUNWAY + 120)
           : rand(150, 400);
   }
@@ -1693,7 +1893,7 @@ function generatePlatform() {
     secrets.push({ x: plat.x + plat.width * 0.5, taken: false, phase: Math.random() * 6 });
   }
 
-  decoratePlatform(plat, wantsSpike, wantsWire);
+  decoratePlatform(plat, wantsSpike, wantsWire, wantsBomb);
 }
 
 // A jump can carry the player a fair way onto the next platform, so the first
@@ -1702,15 +1902,22 @@ function generatePlatform() {
 const LANDING_ZONE = 200;
 
 /** Scatter coins and obstacles onto a freshly created platform. */
-function decoratePlatform(plat, wantsSpike, wantsWire) {
+function decoratePlatform(plat, wantsSpike, wantsWire, wantsBomb) {
   // --- Spikes sit past the landing zone and never within 70px of the far
-  //     edge, so there is always somewhere safe to land and room to react. ---
+  //     edge, so there is always somewhere safe to land and room to react.
+  //     A bomb takes the same slot, so every clearance rule below (wires,
+  //     springs, turrets, portals, coins never dangled over it) covers it. ---
   let spikeX = null;
-  if (wantsSpike && plat.width > LANDING_ZONE + 120) {
+  if ((wantsSpike || wantsBomb) && plat.width > LANDING_ZONE + 120) {
     spikeX = plat.x + rand(LANDING_ZONE, plat.width - 70);
-    // near/scored drive the "close call" bonus in checkCollisions.
-    spikes.push({ x: spikeX, y: plat.y - 30, size: 30,
-                  near: Infinity, scored: false });
+    if (wantsBomb) {
+      bombs.push({ x: spikeX + 15, y: plat.y, fuse: Math.random() * 6, blown: false });
+      bombGap = 2;
+    } else {
+      // near/scored drive the "close call" bonus in checkCollisions.
+      spikes.push({ x: spikeX, y: plat.y - 30, size: 30,
+                    near: Infinity, scored: false });
+    }
   }
 
   // --- Tripwire: only where the platform runs on long enough to recover. ---
@@ -2200,11 +2407,11 @@ function updatePowers() {
   if (reviveFlash > 0) reviveFlash--;
   if (savedFlash > 0) savedFlash--;
 
-  // Magnet: drag nearby uncollected coins toward the player.
+  // Magnet: drag nearby uncollected coins - and coins a bomb scattered - in.
   if (power.magnet > 0) {
     const cx = PLAYER_X + PLAYER_W / 2, cy = player.y + PLAYER_H / 2;
-    for (const c of coins) {
-      if (c.collected) continue;
+    for (const c of coins.concat(scatter)) {
+      if (c.collected || c.life === 0) continue;
       const dx = cx - c.x, dy = cy - c.y;
       const d = Math.hypot(dx, dy);
       if (d < MAGNET_RANGE && d > 0.01) {
@@ -2849,7 +3056,7 @@ function snapshotRun() {
     meters: Math.floor(distance / 10), score: Math.floor(score),
     level: levelOf(), lives, stageName: stageDef().name,
     world: { platforms, coins, spikes, powerups, wires, springs, portals,
-             turrets, bullets, secrets, cores },
+             turrets, bullets, secrets, cores, bombs, scatter },
     player,
     s: { scrollSpeed, distance, coinCount, score, combo, comboTimer, airFrames,
          coyoteFrames, invuln, beatBest, lives, lastLifeWarned,
@@ -2858,7 +3065,7 @@ function snapshotRun() {
          lowFuelWarned, cubUsed, petCoinBonus, heroFuel, jetFuel, jetSpeedMod,
          web, webCooldown, swingCarry, websLeft, runBanked, runSpent,
          walletCarry, balloonCoins, balloonsPopped, petX, petY, power,
-         zoneIndex, zoneFade, stats, missions, resumeRamp }
+         zoneIndex, zoneFade, stats, missions, resumeRamp, runLost, bombGap }
   });
 }
 
@@ -2871,6 +3078,7 @@ function applySnapshot(snap) {
   powerups = w.powerups; wires = w.wires; springs = w.springs;
   portals = w.portals; turrets = w.turrets; bullets = w.bullets;
   secrets = w.secrets; cores = w.cores;
+  bombs = w.bombs || []; scatter = w.scatter || [];
   // JSON has no Infinity: an unscored spike's "closest so far" comes back as
   // null, which compares as 0 and would pay a CLOSE CALL nobody earned.
   for (const sp of spikes) if (typeof sp.near !== "number") sp.near = Infinity;
@@ -2894,6 +3102,7 @@ function applySnapshot(snap) {
   petX = s.petX; petY = s.petY; power = s.power;
   zoneIndex = s.zoneIndex; zoneFade = s.zoneFade;
   stats = s.stats; missions = s.missions; resumeRamp = s.resumeRamp;
+  runLost = s.runLost || 0; bombGap = s.bombGap || 0;
 
   runId = d.runId; runSeq = d.seq;
   started = true; gameOver = false;
@@ -3440,6 +3649,7 @@ function finishRun() {
   // screen too, and a purchase made AFTER the run ended is not part of the
   // run's ledger.
   runWalletSpent = runSpent;
+  runWalletLost = runLost;
   newRecord = false;
   if (Math.floor(score) > save.bestScore) { save.bestScore = Math.floor(score); newRecord = true; }
   if (meters > save.best) save.best = meters;
@@ -3460,6 +3670,7 @@ function finishRun() {
 let newRecord = false;
 let runWalletGain = 0;   // coins banked by the last finished run
 let runWalletSpent = 0;  // coins the last finished run spent in the shop
+let runWalletLost = 0;   // coins the last finished run lost to bombs
 let runBanked = 0;       // coins this run has put in the wallet so far
 let runSpent = 0;        // coins this run has taken out (shop purchases only)
 let walletCarry = 0;     // fractional Crown bonus waiting to become a whole coin
@@ -3682,6 +3893,8 @@ function scrollWorld() {
   for (const pt of portals)  { pt.inX -= s; if (pt.outX !== null) pt.outX -= s; pt.spin += 0.12; }
   for (const tu of turrets)  tu.x -= s;
   for (const b of bullets)   b.x -= s;
+  for (const bm of bombs)    { bm.x -= s; bm.fuse += 0.3; }
+  for (const sc of scatter)  sc.x -= s;
   // World speed, NOT cloud speed. This one line is the whole tell.
   for (const sc of secrets)  { sc.x -= s; sc.phase += 0.02; }
   // The web's anchor is stuck to the world, so it scrolls with it. Without
@@ -3764,6 +3977,8 @@ function recycleWorld() {
   turrets   = turrets.filter(q => q.x > -60);
   bullets   = bullets.filter(q => q.x > -40);
   secrets   = secrets.filter(q => q.x > -90 && !q.taken);
+  bombs     = bombs.filter(q => q.x > -40 && !q.blown);
+  scatter   = scatter.filter(q => q.life > 0 && q.x > -40 && q.y < WORLD_H + 60);
   // A core that scrolls past uncollected is NOT thrown away. The player earned
   // it by finishing a mission; losing it to a single mistimed jump would make
   // the reward feel arbitrary and punish the exact moment it should celebrate.
@@ -3925,6 +4140,28 @@ function checkCollisions() {
       die("spike");
       return;
     }
+  }
+
+  // --- Bombs: a round body on the surface. Circle against the same inset
+  //     box the spikes use, so a close jump reads as a close jump. ---
+  if (invuln <= 0) {
+    for (const bm of bombs) {
+      if (bm.blown) continue;
+      const bx = bm.x, by = bm.y - BOMB_R;
+      const nx = Math.max(px + 6, Math.min(bx, px + PLAYER_W - 6));
+      const ny = Math.max(py + 4, Math.min(by, py + PLAYER_H - 2));
+      if ((bx - nx) * (bx - nx) + (by - ny) * (by - ny) < (BOMB_R - 2) * (BOMB_R - 2)) {
+        hitBomb(bm);
+        if (gameOver || lifePause) return;
+        break;
+      }
+    }
+  }
+  // --- Scattered coins: grab them back while they last. ---
+  for (const sc of scatter) {
+    if (sc.life <= 0 || SCATTER_LIFE - sc.life < SCATTER_ARM) continue;
+    const dx = cx - sc.x, dy = cy - sc.y;
+    if (dx * dx + dy * dy < 34 * 34) catchScatter(sc);
   }
 
   // --- Bullets: a knee-high shell. Inset like the spikes so a close jump
@@ -4203,6 +4440,8 @@ function rebuildRunwayAfterRevive() {
   springs  = springs.filter(q => q.x + q.w < cut);
   portals  = portals.filter(q => (q.outX === null ? q.inX : q.outX) + PORTAL_R < cut);
   turrets  = turrets.filter(q => q.x + 40 < cut);
+  bombs    = bombs.filter(q => q.x + BOMB_R < cut);
+  scatter  = [];
   powerups = powerups.filter(q => q.x < cut);
   secrets  = [];
   bullets  = [];
@@ -4758,6 +4997,47 @@ function drawTurrets() {
     ctx.fillStyle = "#FF6D00";
     ctx.beginPath(); ctx.moveTo(b.x + 5, b.y - 4); ctx.lineTo(b.x + 15, b.y); ctx.lineTo(b.x + 5, b.y + 4);
     ctx.closePath(); ctx.fill();
+  }
+}
+
+/**
+ * A classic cartoon bomb: round, black, a lit fuse that fizzes. It must read
+ * as "do not touch" at a glance and look nothing like a coin or a pickup.
+ * Scattered coins are drawn here too, blinking as their time runs out.
+ */
+function drawBombs() {
+  for (const bm of bombs) {
+    if (bm.blown || bm.x < -40 || bm.x > W + 40) continue;
+    const cx = bm.x, cy = bm.y - BOMB_R;
+    ctx.save();
+    // body
+    const g = ctx.createRadialGradient(cx - 4, cy - 5, 2, cx, cy, BOMB_R);
+    g.addColorStop(0, "#5A5F66"); g.addColorStop(1, "#16181C");
+    ctx.fillStyle = g; ctx.strokeStyle = "#000"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(cx, cy, BOMB_R, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = "rgba(255,255,255,0.45)";
+    ctx.beginPath(); ctx.arc(cx - 4, cy - 5, 3, 0, Math.PI * 2); ctx.fill();
+    // cap and fuse
+    ctx.fillStyle = "#3A3F46";
+    ctx.fillRect(cx - 4, cy - BOMB_R - 4, 8, 5); ctx.strokeRect(cx - 4, cy - BOMB_R - 4, 8, 5);
+    ctx.strokeStyle = "#C8A26B"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(cx, cy - BOMB_R - 4);
+    ctx.quadraticCurveTo(cx + 6, cy - BOMB_R - 12, cx + 9, cy - BOMB_R - 9); ctx.stroke();
+    // the spark: flickers and throws a few embers
+    const fl = 0.6 + Math.abs(Math.sin(bm.fuse * 3)) * 0.6;
+    ctx.fillStyle = "#FFE066";
+    ctx.beginPath(); ctx.arc(cx + 9, cy - BOMB_R - 9, 3.2 * fl, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#FF6D00";
+    ctx.beginPath(); ctx.arc(cx + 9, cy - BOMB_R - 9, 1.8 * fl, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+
+  for (const sc of scatter) {
+    if (sc.life <= 0 || sc.x < -20 || sc.x > W + 20) continue;
+    if (sc.life < 45 && Math.floor(sc.life / 4) % 2 === 0) continue;   // about to go
+    const w = 3 + Math.abs(Math.cos(sc.life * 0.25)) * 6;
+    ctx.fillStyle = C.coin; ctx.strokeStyle = "#B8860B"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.ellipse(sc.x, sc.y, w, 9, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
   }
 }
 
@@ -5831,8 +6111,13 @@ function drawUI() {
   ctx.fillStyle = C.coinShine;
   ctx.beginPath(); ctx.arc(0, 0, 4, 0, Math.PI * 2); ctx.fill();
   ctx.restore();
+  // Once bombs exist, an empty pocket means the next bomb costs a life - so
+  // the counter says so, in red, rather than leaving it to be discovered.
+  const unshielded = started && coinCount === 0 && levelOf() >= 5;
+  if (unshielded) ctx.globalAlpha = 0.6 + Math.abs(Math.sin(elapsed * 5)) * 0.4;
   outlinedText(String(coinCount), coinLabelX, 76,
-               "bold 23px 'Trebuchet MS', sans-serif", C.coin);
+               "bold 23px 'Trebuchet MS', sans-serif", unshielded ? "#FF5555" : C.coin);
+  ctx.globalAlpha = 1;
 
   // The BANKED total, always on screen. Without it the player only ever sees
   // this run's haul and cannot tell that their savings are carrying over.
@@ -5972,7 +6257,8 @@ function drawLifeLost() {
                lives === 1 ? "#FF3B3B" : "#FFFFFF", "center", 3.5);
 
   const what = lifePauseCause === "spike" ? "Hit a spike"
-             : lifePauseCause === "shot"  ? "Shot by a turret" : "Fell";
+             : lifePauseCause === "shot"  ? "Shot by a turret"
+             : lifePauseCause === "bomb"  ? "Bomb - no coins left to shield you" : "Fell";
   outlinedText(what + "  ·  form and combo lost", W / 2, 282,
                "bold 17px 'Trebuchet MS', sans-serif", "#B9E6FF", "center", 3);
 
@@ -6330,6 +6616,7 @@ function drawGameOver(meters) {
   // intentions: walletBefore + runWalletGain must equal walletAfter.
   let gainTxt = runWalletGain > 0 ? "  (+" + runWalletGain : "";
   if (gainTxt && runWalletSpent > 0) gainTxt += ", -" + runWalletSpent + " spent";
+  if (gainTxt && runWalletLost > 0) gainTxt += ", -" + runWalletLost + " to bombs";
   if (gainTxt) gainTxt += " this run)";
   outlinedText("WALLET  " + save.wallet.toLocaleString() + gainTxt, W / 2, 452,
                "bold 21px 'Trebuchet MS', sans-serif", C.coin, "center", 3.5);
@@ -6444,6 +6731,7 @@ function update(dt) {
   updatePet();
   updateCrumbling();
   updateTurrets();
+  updateScatter();
   scrollWorld();
   recycleWorld();
   checkCollisions();
@@ -6506,6 +6794,7 @@ function render() {
   drawSprings();
   drawWires();
   drawTurrets();
+  drawBombs();
   drawSpikes();
   drawPet();
   drawPlayer();
@@ -6625,6 +6914,7 @@ function restart() {
   portals = [];
   turrets = []; bullets = [];
   secrets = []; flightJumps = 0;
+  bombs = []; scatter = []; runLost = 0; bombGap = 0;
   shownLevel = 0;
   bannerQueue = []; banner = null;
   stage = 0; cores = []; evolveFlash = 0; coresEarned = 0;

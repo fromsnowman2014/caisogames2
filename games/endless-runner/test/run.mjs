@@ -414,7 +414,9 @@ console.log('\nName entry (regression guards):');
   // The prompt clears its flag ~120ms after closing, to swallow the trailing
   // touchend of the tap that dismissed it. Wait that out before checking that
   // the game has taken the keyboard back.
-  await page.waitForTimeout(300);
+  // Wait for the condition itself, not a fixed time: under load a fixed
+  // 300ms occasionally lost the race with the 120ms timer.
+  await page.waitForFunction(() => !nameModalOpen, null, { timeout: 3000 });
   const jump = await page.evaluate(() => {
     const ev = new KeyboardEvent('keydown', { code: 'Space', key: ' ', bubbles: true, cancelable: true });
     window.dispatchEvent(ev);
@@ -2075,6 +2077,131 @@ console.log('\nKeyboard:');
     press('KeyE'); o.eEndsTheRunFromThePause = gameOver === true;
     runFor(RESUME_LOCK + 2);
     press('Enter'); o.enterRestartsAfterGameOver = gameOver === false;
+    restart();
+    return o;
+  });
+  for (const [k, v] of Object.entries(e)) ok(v === true, k);
+  await browser.close();
+}
+
+// 30c. BOMBS (level 5). Sonic's ring rule: a bomb blows the pocket's coins
+//      out instead of taking a life; with an empty pocket it costs a life.
+//      Shells pop coins in their path into fireworks and set off bombs.
+console.log('\nBombs:');
+{
+  const { browser, page } = await open(webkit, TARGETS[0].ctx);
+  const e = await page.evaluate(() => {
+    const o = {};
+    const flat = () => { platforms.length = 0;
+      platforms.push({ x: -200, y: GROUND_Y, width: 4000, type: 'ground', fake: false,
+                       crumble: false, crumbleTimer: -1, fallen: false, tufts: [] }); };
+    const fresh = () => { restart(); started = true; flat(); distance = 3000 * 5;
+      spikes = []; wires = []; turrets = []; springs = []; portals = []; bombs = []; coins = []; powerups = []; };
+    const bombAtPlayer = () => { bombs.length = 0; bombs.push({ x: PLAYER_X + PLAYER_W / 2, y: GROUND_Y, fuse: 0, blown: false }); };
+    const touch = () => { player.y = GROUND_Y - PLAYER_H; player.grounded = true; player.velocityY = 0; checkCollisions(); };
+    const pocketOf = n => { for (let i = 0; i < n; i++) collectCoin({ x: 0, y: 0, collected: false }); };
+
+    distance = 3000 * 3; o.noBombsBeforeLevelFive = bombChance() === 0;
+    distance = 3000 * 4; o.bombsFromLevelFive = bombChance() > 0 && levelDef().name === 'BOMB FIELD';
+
+    fresh(); save.wallet = 100; pocketOf(23);
+    const w0 = save.wallet, l0 = lives;
+    bombAtPlayer(); touch();
+    o.aBombTakesNoLifeWhileThePocketHasCoins = lives === l0 && !lifePause && !gameOver;
+    o.itBlowsThePocketOutOfTheWallet = coinCount === 0 && save.wallet === w0 - 23 && runLost === 23;
+    o.theCoinsScatterAsPiecesWorthThePocket = scatter.length === 23 && scatter.reduce((n, q) => n + q.value, 0) === 23;
+    o.theCharacterFlickersAfter = invuln > 0 && bombs[0].blown;
+
+    for (let i = 0; i < SCATTER_ARM + 1; i++) updateScatter();
+    scatter = [scatter[0]];
+    const sc = scatter[0]; sc.x = PLAYER_X + PLAYER_W / 2; sc.y = player.y + PLAYER_H / 2;
+    const wb = save.wallet;
+    checkCollisions();
+    o.catchingAPieceBackRestoresItsShare = coinCount === sc.value && save.wallet === wb + sc.paid && runLost === 23 - sc.paid;
+
+    // running on wins SOME back - not none, not all
+    const shares = [];
+    for (const spd of [6, 8, 10]) for (let t = 0; t < 10; t++) {
+      fresh(); scrollSpeed = spd; save.wallet = 200; pocketOf(30);
+      bombAtPlayer(); touch();
+      const lost0 = runLost;
+      for (let i = 0; i < SCATTER_LIFE + 5; i++) { updateScatter(); scrollWorld(); scrollSpeed = spd; checkCollisions(); invuln = 30; }
+      shares.push((lost0 - runLost) / lost0);
+    }
+    shares.sort((a, b) => a - b);
+    const med = shares[Math.floor(shares.length / 2)];
+    o.runningOnCatchesSomeBackButNotAll = med >= 0.2 && med <= 0.7;
+
+    fresh(); save.wallet = 100; coinCount = 0;
+    const l1 = lives; bombAtPlayer(); touch();
+    o.anEmptyPocketCostsALife = lives === l1 - 1 && lifePauseCause === 'bomb';
+
+    fresh(); save.wallet = 100; pocketOf(9); power.shield = 1;
+    const w2 = save.wallet; bombAtPlayer(); touch();
+    o.aShieldAbsorbsABomb = power.shield === 0 && coinCount === 9 && save.wallet === w2;
+
+    fresh(); save.wallet = 100; pocketOf(9); bombAtPlayer(); touch();
+    const l3 = lives;
+    bombs.push({ x: PLAYER_X + PLAYER_W / 2, y: GROUND_Y, fuse: 0, blown: false }); touch();
+    o.aSecondBombInsideTheFlickerDoesNothing = lives === l3;
+
+    fresh(); save.wallet = 100; pocketOf(9); bombAtPlayer();
+    player.y = GROUND_Y - PLAYER_H - 40; player.grounded = false; player.velocityY = -2;
+    checkCollisions();
+    o.aJumpClearsABomb = coinCount === 9 && !bombs[0].blown;
+
+    fresh(); save.wallet = 4; coinCount = 15; bombAtPlayer(); touch();
+    o.theWalletIsNeverOverdrawn = save.wallet === 0 && runLost === 4;
+
+    restart(); started = true; flat(); distance = 15000; save.equip.hat = 'none';
+    spikes = []; bombs = []; turrets = [];
+    const before = save.wallet;
+    pocketOf(20); bombAtPlayer(); touch();
+    lives = 1; invuln = 0; die('fall');
+    o.theLedgerShowsTheLoss = before + runWalletGain - runWalletSpent - runWalletLost === save.wallet && runWalletLost === 20;
+
+    restart(); distance = 3000 * 6;
+    let placed = 0, bad = 0, coinsOver = 0, backToBack = 0, lastIdx = -9, idx = 0;
+    for (let i = 0; i < 700; i++) {
+      const nb = bombs.length;
+      generatePlatform(); idx++;
+      if (bombs.length > nb) {
+        placed++;
+        const q = bombs[bombs.length - 1];
+        const host = platforms.filter(pl => !pl.fake).find(pl => q.x >= pl.x && q.x <= pl.x + pl.width);
+        if (!host || host.type !== 'ground' || q.x - host.x < LANDING_ZONE) bad++;
+        for (const s of spikes)  if (Math.abs(s.x + 15 - q.x) < 90) bad++;
+        for (const w of wires)   if (Math.abs(w.x - q.x) < 90) bad++;
+        for (const s of springs) if (Math.abs(s.x - q.x) < 90) bad++;
+        for (const t of turrets) if (Math.abs(t.x - q.x) < 100) bad++;
+        for (const c of coins)   if (Math.abs(c.x - q.x) < 40) coinsOver++;
+        if (idx - lastIdx <= 1) backToBack++;
+        lastIdx = idx;
+      }
+      if (platforms.length > 40) { const cut = platforms[platforms.length - 15].x;
+        platforms = platforms.slice(-15); bombs = bombs.filter(q => q.x > cut);
+        spikes = spikes.filter(q => q.x > cut); wires = wires.filter(q => q.x > cut);
+        springs = springs.filter(q => q.x > cut); turrets = turrets.filter(q => q.x > cut);
+        coins = coins.filter(q => q.x > cut); }
+    }
+    o.bombsArePlacedOnlyWhereFair = placed > 30 && bad === 0 && coinsOver === 0 && backToBack === 0;
+
+    fresh(); save.wallet = 50; pocketOf(4);
+    coins = [{ x: PLAYER_X + 300, y: GROUND_Y - 42, collected: false },
+             { x: PLAYER_X + 340, y: GROUND_Y - 42, collected: false },
+             { x: PLAYER_X + 380, y: GROUND_Y - 110, collected: false }];
+    bullets = [{ x: PLAYER_X + 420, y: GROUND_Y - 22, vx: -4.5, flash: 0 }];
+    bombs = [{ x: PLAYER_X + 200, y: GROUND_Y, fuse: 0, blown: false }];
+    const wS = save.wallet, cS = coinCount, lS = lives;
+    for (let i = 0; i < 60 && bullets.length; i++) { updateTurrets(); scrollSpeed = 0; }
+    o.aShellPopsTheCoinsInItsPath = coins[0].collected && coins[1].collected && !coins[2].collected;
+    o.poppedCoinsPayNothing = save.wallet === wS && coinCount === cS;
+    o.aShellSetsOffABombHarmlessly = bombs[0].blown && bullets.length === 0 && lives === lS;
+
+    fresh(); save.wallet = 100; pocketOf(12);
+    bombAtPlayer(); bombs.push({ x: PLAYER_X + 400, y: GROUND_Y, fuse: 0, blown: false }); touch();
+    applySnapshot(snapshotRun());
+    o.aSaveCarriesBombsScatterAndTheLoss = bombs.length === 2 && scatter.length === 12 && runLost === 12;
     restart();
     return o;
   });
